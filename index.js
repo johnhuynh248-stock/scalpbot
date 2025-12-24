@@ -12,6 +12,10 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 // Active trades storage
 const activeTrades = new Map();
 
+// === OPTIONS CACHE (RATE-LIMIT PROTECTION) ===
+const optionsCache = new Map();
+const OPTIONS_CACHE_TTL = 60 * 1000; // 60 seconds
+
 //  configuration (Production only)
 const TRADIER_API_URL = 'https://api.tradier.com/v1';
 const BASE_URL = TRADIER_API_URL;
@@ -73,8 +77,21 @@ function getTradierHeaders() {
         'Accept': 'application/json'
     };
 }
-// === OPTIONS CHAIN FETCH (TRADIER) ===
+
+// === OPTIONS CHAIN FETCH (TRADIER) — CACHED ===
 async function getOptionsChain(symbol, expiration) {
+    const cacheKey = `${symbol}_${expiration}`;
+    const now = Date.now();
+
+    // Return cached chain if still valid
+    if (optionsCache.has(cacheKey)) {
+        const cached = optionsCache.get(cacheKey);
+        if (now - cached.timestamp < OPTIONS_CACHE_TTL) {
+            return cached.data;
+        }
+    }
+
+    // Fetch from Tradier
     const response = await axios.get(
         `${BASE_URL}/markets/options/chains`,
         {
@@ -87,9 +104,19 @@ async function getOptionsChain(symbol, expiration) {
         }
     );
 
-    const options = response.data?.options?.option;
-    return Array.isArray(options) ? options : [];
+    const options = Array.isArray(response.data?.options?.option)
+        ? response.data.options.option
+        : [];
+
+    // Save to cache
+    optionsCache.set(cacheKey, {
+        data: options,
+        timestamp: now
+    });
+
+    return options;
 }
+
 // === GET NEAREST EXPIRATION (1–3 DTE) ===
 async function getNearestExpiration(symbol, maxDTE = 3) {
     const response = await axios.get(
