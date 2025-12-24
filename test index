@@ -738,19 +738,6 @@ function calculateMACD(closes) {
     };
 }
 
-// Helper: Calculate EMA
-function calculateEMA(data, period) {
-    if (data.length < period) return data[data.length - 1];
-
-    const multiplier = 2 / (period + 1);
-    let ema = data.slice(0, period).reduce((a, b) => a + b, 0) / period;
-
-    for (let i = period; i < data.length; i++) {
-        ema = (data[i] - ema) * multiplier + ema;
-    }
-
-    return ema;
-}
 // === EMA STACK (9 / 21 / 50) ===
 function getEMAStack(closes) {
     if (!closes || closes.length < 50) return 'mixed';
@@ -799,25 +786,6 @@ function htfLtfScore(htfIndicators, ltfIndicators) {
     return score;
 }
 
-// Helper: Find support levels
-function findSupportLevels(lows, currentPrice) {
-    const recentLows = lows.slice(-50);
-    const levels = [];
-    
-    for (let i = 1; i < recentLows.length - 1; i++) {
-        if (recentLows[i] < recentLows[i - 1] && recentLows[i] < recentLows[i + 1]) {
-            if (recentLows[i] < currentPrice) {
-                levels.push(recentLows[i]);
-            }
-        }
-    }
-
-    // Return top 3 nearest support levels
-    return levels
-        .sort((a, b) => b - a)
-        .slice(0, 3)
-        .map(l => parseFloat(l.toFixed(2)));
-}
 // === TIME-OF-DAY LIQUIDITY FILTER ===
 function isBadLiquidityTime() {
     const now = new Date().toLocaleString('en-US', { 
@@ -865,26 +833,6 @@ function computeConfidence(indicators) {
 
     return Math.min(100, score);
 }
-// Helper: Find resistance levels
-function findResistanceLevels(highs, currentPrice) {
-    const recentHighs = highs.slice(-50);
-    const levels = [];
-    
-    for (let i = 1; i < recentHighs.length - 1; i++) {
-        if (recentHighs[i] > recentHighs[i - 1] && recentHighs[i] > recentHighs[i + 1]) {
-            if (recentHighs[i] > currentPrice) {
-                levels.push(recentHighs[i]);
-            }
-        }
-    }
-
-    // Return top 3 nearest resistance levels
-    return levels
-        .sort((a, b) => a - b)
-        .slice(0, 3)
-        .map(l => parseFloat(l.toFixed(2)));
-}
-
 // Helper: Get date N days ago
 function getDateNDaysAgo(days) {
     const date = new Date();
@@ -1036,6 +984,7 @@ async function analyzeTextMultiTF(symbol, direction = null, tradingStyle = 'scal
         // Use HTF indicators for main analysis
         const indicators = marketData.htf.indicators;
 const systemConfidence = computeConfidence(indicators);
+const allowTrade = systemConfidence >= 65;
 const badLiquidity = isBadLiquidityTime();
 const conflictScore = htfLtfScore(
     marketData.htf.indicators,
@@ -1097,11 +1046,14 @@ ${styleEmoji} *TRADING STYLE: ${tradingStyle.toUpperCase()}*
 • Session: ${marketData.marketSession}
 🧠 SYSTEM CONFIDENCE (RULE-BASED):
 • Score: ${systemConfidence}%
-• Rule:
-  - <65% → SKIP
-  - 65–74% → WAIT / LOW SIZE
-  - ≥75% → VALID TRADE
-  - If AI confidence differs by >15%, USE THE LOWER VALUE
+• Trade Permission: ${allowTrade ? '✅ ALLOWED' : '❌ AVOID TRADE'}
+
+SYSTEM RULES:
+- <65% → AVOID TRADE (NO ENTRY, NO STRIKE, NO TP/SL)
+- 65–74% → WAIT / LOW SIZE
+- ≥75% → VALID TRADE
+- If AI confidence differs by >15%, USE THE LOWER VALUE
+
 
 📈 HTF (${marketData.htf.interval}) - TREND ANALYSIS:
 • Direction: ${trendEmoji} ${indicators.trend?.direction || 'unknown'} (${indicators.trend?.strength || 'unknown'})
