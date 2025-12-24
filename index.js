@@ -664,6 +664,15 @@ bot.onText(/\/(analyze|scalp|check)\s+([A-Z]+)(\s+(CALL|PUT))?/i, async (msg, ma
         const marketWarning = !result.marketData.isMarketOpen ? 
             `\n⚠️ *Market ${result.marketData.marketSession.toUpperCase()}*\nUsing last close data - Not tradeable now!\n` : '';
         
+        // Get EST time for consistency with market hours
+        const estTime = new Date().toLocaleString('en-US', { 
+            timeZone: 'America/New_York',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+        });
+        
         const response = `📊 *${symbol} SCALPING ANALYSIS*
 ${marketWarning}        
 ${result.analysis}
@@ -674,7 +683,7 @@ Change: ${result.marketData.changePercent}%
 VWAP: $${result.marketData.indicators.vwap.toFixed(2)}
 Session: ${result.marketData.marketSession}
 
-⏰ Analyzed at: ${new Date().toLocaleTimeString('en-US')}`;
+⏰ Analyzed at: ${estTime} EST`;
 
         await bot.deleteMessage(chatId, processingMsg.message_id);
         bot.sendMessage(chatId, response, { parse_mode: 'Markdown' });
@@ -742,11 +751,20 @@ async function processImages(chatId, fileIds, analysisType) {
         // Analyze with vision
         const analysis = await analyzeWithVision(imageUrls, marketData, analysisType);
         
+        // Get EST time
+        const estTime = new Date().toLocaleString('en-US', { 
+            timeZone: 'America/New_York',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+        });
+        
         const response = `${analysisType === 'full' ? '📊 FULL' : '⭐ SIGNAL'} *VISUAL ANALYSIS*
 
 ${analysis}
 
-⏰ Analyzed at: ${new Date().toLocaleTimeString('en-US')}`;
+⏰ Analyzed at: ${estTime} EST`;
 
         await bot.deleteMessage(chatId, processingMsg.message_id);
         bot.sendMessage(chatId, response, { parse_mode: 'Markdown' });
@@ -972,9 +990,16 @@ bot.on('polling_error', (error) => {
 });
 
 // Startup
+const startTime = new Date().toLocaleString('en-US', { 
+    timeZone: 'America/New_York',
+    dateStyle: 'full',
+    timeStyle: 'long'
+});
+
 console.log('🤖 Professional Scalping Bot started!');
 console.log('📊 Using Tradier API');
 console.log('👁️ Using OpenAI Vision (gpt-4o)');
 console.log('🌍 Bot available 24/7 - Monitors market hours automatically');
 console.log('✅ Ready to scalp!');
 console.log(`Current session: ${getMarketSession().toUpperCase()}`);
+console.log(`EST Time: ${startTime}`);
