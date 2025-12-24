@@ -83,6 +83,7 @@ async function getMarketDataMultiTF(symbol, tradingStyle = 'scalping') {
         const config = TIMEFRAMES[tradingStyle];
         
         console.log(`Fetching ${tradingStyle} data for ${symbol} from Tradier...`);
+        console.log(`HTF interval: ${config.htf}, LTF interval: ${config.ltf}`);
         
         // Get quote (always needed)
         const quoteResponse = await axios.get(
@@ -99,6 +100,8 @@ async function getMarketDataMultiTF(symbol, tradingStyle = 'scalping') {
         if (!quote) {
             throw new Error('Invalid symbol or no data available');
         }
+        
+        console.log(`Quote data: Price=$${quote.last}, Volume=${quote.volume}`);
 
         // Get data for HTF (Higher Timeframe) and LTF (Lower Timeframe)
         const htfInterval = config.htf;
@@ -190,7 +193,22 @@ async function getMarketDataMultiTF(symbol, tradingStyle = 'scalping') {
         console.error('- Status:', error.response?.status);
         console.error('- Response Data:', JSON.stringify(error.response?.data, null, 2));
         
-        throw new Error(`Failed to fetch market data: ${error.response?.data || error.message}`);
+        // Extract meaningful error message
+        let errorMsg = error.message;
+        
+        if (error.response?.data) {
+            if (typeof error.response.data === 'string') {
+                errorMsg = error.response.data;
+            } else if (error.response.data.fault?.faultstring) {
+                errorMsg = error.response.data.fault.faultstring;
+            } else if (error.response.data.error) {
+                errorMsg = error.response.data.error;
+            } else {
+                errorMsg = JSON.stringify(error.response.data);
+            }
+        }
+        
+        throw new Error(`Failed to fetch market data: ${errorMsg}`);
     }
 }
 
