@@ -1,0 +1,33 @@
+{
+  "name": "professional-scalping-bot",
+  "version": "2.0.0",
+  "description": "Professional Telegram scalping bot with OpenAI Vision and Tradier API",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "scalping",
+    "trading",
+    "openai",
+    "tradier"
+  ],
+  "author": "Anh",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "node-telegram-bot-api": "^0.66.0",
+    "openai": "^4.77.0",
+    "axios": "^1.7.9"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}
