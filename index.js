@@ -25,35 +25,35 @@ console.log('━━━━━━━━━━━━━━━━━━━━━━�
 // Trading timeframes configuration
 const TIMEFRAMES = {
     scalping: {
-        intervals: ['1min', '3min', '5min'],
-        htf: '5min',    // Higher timeframe
-        ltf: '1min',    // Lower timeframe
-        lookback: 1,    // 1 day
-        tp1: 0.003,     // 0.3% TP1
-        tp2: 0.006,     // 0.6% TP2
-        sl: 0.005,      // 0.5% SL
-        rr_min: 1.5,    // Minimum R:R ratio
+        intervals: ['1min', '5min'],
+        htf: '5min',        // Higher timeframe
+        ltf: '1min',        // Lower timeframe
+        lookback: 1,        // 1 day
+        tp1: 0.003,         // 0.3% TP1
+        tp2: 0.006,         // 0.6% TP2
+        sl: 0.005,          // 0.5% SL
+        rr_min: 1.5,
         hold_time: '5-15 min'
     },
     daytrading: {
-        intervals: ['5min', '15min', '1h'],
+        intervals: ['5min', '15min'],
         htf: '15min',
         ltf: '5min',
-        lookback: 2,    // 2 days
-        tp1: 0.008,     // 0.8% TP1
-        tp2: 0.015,     // 1.5% TP2
-        sl: 0.008,      // 0.8% SL
+        lookback: 2,        // 2 days
+        tp1: 0.008,         // 0.8% TP1
+        tp2: 0.015,         // 1.5% TP2
+        sl: 0.008,          // 0.8% SL
         rr_min: 1.5,
         hold_time: '30-90 min'
     },
     swing: {
-        intervals: ['1h', '4h', 'daily'],
-        htf: '4h',
-        ltf: '1h',
-        lookback: 10,   // 10 days
-        tp1: 0.025,     // 2.5% TP1
-        tp2: 0.05,      // 5.0% TP2
-        sl: 0.02,       // 2.0% SL
+        intervals: ['15min', 'daily'],
+        htf: 'daily',       // HTF = daily candles
+        ltf: '15min',       // LTF = intraday structure
+        lookback: 10,       // 10 days
+        tp1: 0.025,         // 2.5% TP1
+        tp2: 0.05,          // 5.0% TP2
+        sl: 0.02,           // 2.0% SL
         rr_min: 2.0,
         hold_time: '1-5 days'
     }
@@ -78,14 +78,22 @@ function getTradierHeaders() {
 async function getMarketDataMultiTF(symbol, tradingStyle = 'scalping') {
     try {
         const session = getMarketSession();
-        const isMarketOpen = session === 'regular' || session === 'pre-market' || session === 'after-hours';
-        
+        const isMarketOpen =
+            session === 'regular' ||
+            session === 'pre-market' ||
+            session === 'after-hours';
+
         const config = TIMEFRAMES[tradingStyle];
-        
-        console.log(`Fetching ${tradingStyle} data for ${symbol} from Tradier...`);
-        console.log(`HTF interval: ${config.htf}, LTF interval: ${config.ltf}`);
-        
-        // Get quote (always needed)
+        if (!config) {
+            throw new Error(`Unknown trading style: ${tradingStyle}`);
+        }
+
+        console.log(`Fetching ${tradingStyle} data for ${symbol}`);
+        console.log(`HTF: ${config.htf} | LTF: ${config.ltf}`);
+
+        // ======================
+        // QUOTE (REQUIRED)
+        // ======================
         const quoteResponse = await axios.get(
             `${BASE_URL}/markets/quotes`,
             {
@@ -94,74 +102,78 @@ async function getMarketDataMultiTF(symbol, tradingStyle = 'scalping') {
             }
         );
 
-        console.log('Quote response received:', quoteResponse.status);
-
-        const quote = quoteResponse.data.quotes.quote;
+        const quote = quoteResponse.data?.quotes?.quote;
         if (!quote) {
-            throw new Error('Invalid symbol or no data available');
+            throw new Error(`No quote data for ${symbol}`);
         }
-        
-        console.log(`Quote data: Price=$${quote.last}, Volume=${quote.volume}`);
 
-        // Get data for HTF (Higher Timeframe) and LTF (Lower Timeframe)
+        // ======================
+        // TIMEFRAMES
+        // ======================
         const htfInterval = config.htf;
         const ltfInterval = config.ltf;
-        
+
         let htfData = [];
         let ltfData = [];
-        
-        // Fetch HTF data
+
+        // ======================
+        // HTF (timesales)
+        // ======================
         try {
             const htfResponse = await axios.get(
-                `${BASE_URL}/markets/history`,
+                `${BASE_URL}/markets/timesales`,
                 {
-                    params: {
-                        symbol: symbol,
-                        interval: htfInterval,
-                        start: getDateNDaysAgo(config.lookback * 2),
-                        end: getTodayDate()
-                    },
+                    params: { symbol, interval: htfInterval },
                     headers: getTradierHeaders(),
                     timeout: 10000
                 }
             );
-            htfData = htfResponse.data.history?.day || [];
-            console.log(`HTF data (${htfInterval}): ${htfData.length} bars`);
-        } catch (error) {
-            console.warn(`HTF data error:`, error.message);
+
+            htfData = htfResponse.data?.series?.data || [];
+            htfData.sort((a, b) => new Date(a.time) - new Date(b.time));
+            console.log(`HTF ${htfInterval}: ${htfData.length} bars`);
+        } catch (e) {
+            console.warn(`HTF fetch failed: ${e.message}`);
         }
 
-        // Fetch LTF data
+        // ======================
+        // LTF (timesales)
+        // ======================
         try {
             const ltfResponse = await axios.get(
-                `${BASE_URL}/markets/history`,
+                `${BASE_URL}/markets/timesales`,
                 {
-                    params: {
-                        symbol: symbol,
-                        interval: ltfInterval,
-                        start: getDateNDaysAgo(config.lookback),
-                        end: getTodayDate()
-                    },
+                    params: { symbol, interval: ltfInterval },
                     headers: getTradierHeaders(),
                     timeout: 10000
                 }
             );
-            ltfData = ltfResponse.data.history?.day || [];
-            console.log(`LTF data (${ltfInterval}): ${ltfData.length} bars`);
-        } catch (error) {
-            console.warn(`LTF data error:`, error.message);
+
+            ltfData = ltfResponse.data?.series?.data || [];
+            ltfData.sort((a, b) => new Date(a.time) - new Date(b.time));
+            console.log(`LTF ${ltfInterval}: ${ltfData.length} bars`);
+        } catch (e) {
+            console.warn(`LTF fetch failed: ${e.message}`);
         }
 
-        // Calculate indicators for both timeframes
-        // If no historical data, use quote data only
-        const htfIndicators = calculateIndicators(htfData.length > 0 ? htfData : [], quote);
-        const ltfIndicators = ltfData.length > 0 ? calculateIndicators(ltfData, quote) : htfIndicators;
+        // ======================
+        // INDICATORS
+        // ======================
+        const htfIndicators = calculateIndicators(htfData, quote);
+        const ltfIndicators =
+            ltfData.length > 0 ? calculateIndicators(ltfData, quote) : null;
 
-        // Calculate R:R adjusted TP/SL
-        const targets = calculateTargets(quote.last || quote.prevclose, config, htfIndicators.atr || 0);
+        // ======================
+        // TARGETS (HTF volatility)
+        // ======================
+        const targets = calculateTargets(
+            quote.last || quote.prevclose,
+            config,
+            htfIndicators.atr || 0
+        );
 
         return {
-            symbol: symbol,
+            symbol,
             price: quote.last || quote.prevclose,
             bid: quote.bid,
             ask: quote.ask,
@@ -172,43 +184,38 @@ async function getMarketDataMultiTF(symbol, tradingStyle = 'scalping') {
             low: quote.low,
             open: quote.open,
             prevClose: quote.prevclose,
+
             htf: {
                 interval: htfInterval,
                 indicators: htfIndicators
             },
             ltf: {
                 interval: ltfInterval,
-                indicators: ltfIndicators
+                indicators: ltfIndicators,
+                valid: ltfIndicators !== null
             },
-            targets: targets,
-            tradingStyle: tradingStyle,
+
+            targets,
+            tradingStyle,
             timestamp: new Date().toISOString(),
-            isMarketOpen: isMarketOpen,
+            isMarketOpen,
             marketSession: session,
             dataAge: isMarketOpen ? 'real-time' : 'last-close',
             dataInterval: htfInterval
         };
     } catch (error) {
-        console.error('Tradier API error details:');
-        console.error('- Message:', error.message);
-        console.error('- Status:', error.response?.status);
-        console.error('- Response Data:', JSON.stringify(error.response?.data, null, 2));
-        
-        // Extract meaningful error message
         let errorMsg = error.message;
-        
+
         if (error.response?.data) {
             if (typeof error.response.data === 'string') {
                 errorMsg = error.response.data;
             } else if (error.response.data.fault?.faultstring) {
                 errorMsg = error.response.data.fault.faultstring;
-            } else if (error.response.data.error) {
-                errorMsg = error.response.data.error;
             } else {
                 errorMsg = JSON.stringify(error.response.data);
             }
         }
-        
+
         throw new Error(`Failed to fetch market data: ${errorMsg}`);
     }
 }
@@ -875,11 +882,11 @@ Data: ${marketData.dataAge}${marketWarning}
 
 Price: $${marketData.price}
 Change: ${marketData.changePercent}%
-VWAP: $${marketData.indicators.vwap}
-RSI: ${marketData.indicators.rsi.toFixed(2)}
-MACD: ${marketData.indicators.macd.histogram.toFixed(4)}
-Support: ${marketData.indicators.supportLevels.join(', ')}
-Resistance: ${marketData.indicators.resistanceLevels.join(', ')}
+VWAP: $${marketData.htf.indicators.vwap}
+RSI: ${marketData.htf.indicators.rsi.toFixed(2)}
+MACD: ${marketData.htf.indicators.macd.histogram.toFixed(4)}
+Support: ${marketData.htf.indicators.supportLevels.map(s => s.price).join(', ')}
+Resistance: ${marketData.htf.indicators.resistanceLevels.map(r => r.price).join(', ')}
 
 Phân tích ${analysisType === 'full' ? 'FULL VISUAL' : 'SIGNAL'} và đưa ra:
 1. Direction: CALL/PUT
@@ -1289,7 +1296,7 @@ Testing Tradier connection...`;
 
 🚧 Resistance levels:${resistanceInfo}
 
-${htfData && htfData.length === 0 ? '⚠️ Note: Limited historical data available' : ''}
+${testData.ltf?.valid === false ? '⚠️ Note: LTF data unavailable' : ''}
 
 🎉 Everything working! Try \`/scalp SPY\``;
         
@@ -1417,12 +1424,12 @@ bot.on('photo', async (msg) => {
     } else {
         // Single image
         const fileId = msg.photo[msg.photo.length - 1].file_id;
-        await processImages(chatId, [fileId], 'signal');
+        await processImages(chatId, [fileId], 'signal', msg.caption);
     }
 });
 
 // Helper: Process images
-async function processImages(chatId, fileIds, analysisType) {
+async function processImages(chatId, fileIds, analysisType, caption = null) {
     const timeEstimate = analysisType === 'full' ? '20-35' : '15-25';
     const processingMsg = await bot.sendMessage(
         chatId,
@@ -1440,7 +1447,7 @@ async function processImages(chatId, fileIds, analysisType) {
         }
 
         // Try to extract symbol from caption or ask
-        const symbol = msg.caption ? extractSymbol(msg.caption) : null;
+        const symbol = caption ? extractSymbol(caption) : null;
         const marketData = symbol ? await getMarketData(symbol) : null;
 
         // Analyze with vision
