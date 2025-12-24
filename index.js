@@ -1067,6 +1067,7 @@ async function analyzeTextMultiTF(symbol, direction = null, tradingStyle = 'scal
         const indicators = marketData.htf.indicators;
 const systemConfidence = computeConfidence(indicators);
 const allowTrade = systemConfidence >= 65;
+        console.log('DEBUG CONFIDENCE:', systemConfidence, 'ALLOW:', allowTrade);
         let optionPick = null;
 
 if (allowTrade && direction) {
