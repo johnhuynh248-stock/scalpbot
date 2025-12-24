@@ -59,23 +59,31 @@ async function getMarketData(symbol) {
             throw new Error('Invalid symbol or no data available');
         }
 
-        // Get historical data for indicators (1 day, 5min intervals)
-        const historyResponse = await axios.get(
-            `${BASE_URL}/markets/history`,
-            {
-                params: {
-                    symbol: symbol,
-                    interval: '5min',
-                    start: getDateNDaysAgo(5),
-                    end: getTodayDate()
-                },
-                headers: getTradierHeaders()
-            }
-        );
+        // Try to get historical data for indicators
+        // Note: Sandbox may have limitations on historical data
+        let history = [];
+        try {
+            const historyResponse = await axios.get(
+                `${BASE_URL}/markets/history`,
+                {
+                    params: {
+                        symbol: symbol,
+                        interval: 'daily', // Use daily instead of 5min for sandbox compatibility
+                        start: getDateNDaysAgo(5),
+                        end: getTodayDate()
+                    },
+                    headers: getTradierHeaders(),
+                    timeout: 5000 // 5 second timeout
+                }
+            );
+            history = historyResponse.data.history?.day || [];
+            console.log('History data retrieved:', history.length, 'days');
+        } catch (histError) {
+            console.warn('Historical data not available (sandbox limitation):', histError.message);
+            // Continue without historical data - use quote data only
+        }
 
-        const history = historyResponse.data.history?.day || [];
-
-        // Calculate indicators
+        // Calculate indicators (will use limited data if history fails)
         const indicators = calculateIndicators(history, quote);
 
         return {
