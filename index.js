@@ -59,27 +59,33 @@ async function getMarketData(symbol) {
             throw new Error('Invalid symbol or no data available');
         }
 
-        // Try to get historical data for indicators
-        // Note: Sandbox may have limitations on historical data
+        // Get historical data for indicators
+        // Production supports: 1min, 5min, 15min intervals
+        // Sandbox only supports: daily
         let history = [];
+        const interval = USE_SANDBOX ? 'daily' : '5min'; // Use 5min for production, daily for sandbox
+        
         try {
             const historyResponse = await axios.get(
                 `${BASE_URL}/markets/history`,
                 {
                     params: {
                         symbol: symbol,
-                        interval: 'daily', // Use daily instead of 5min for sandbox compatibility
-                        start: getDateNDaysAgo(5),
+                        interval: interval,
+                        start: USE_SANDBOX ? getDateNDaysAgo(10) : getDateNDaysAgo(2), // More days for daily, less for intraday
                         end: getTodayDate()
                     },
                     headers: getTradierHeaders(),
-                    timeout: 5000 // 5 second timeout
+                    timeout: 10000 // 10 second timeout
                 }
             );
             history = historyResponse.data.history?.day || [];
-            console.log('History data retrieved:', history.length, 'days');
+            console.log(`History data retrieved: ${history.length} ${interval} bars`);
         } catch (histError) {
-            console.warn('Historical data not available (sandbox limitation):', histError.message);
+            console.warn('Historical data error:', histError.message);
+            if (USE_SANDBOX) {
+                console.warn('Using sandbox - limited to daily data');
+            }
             // Continue without historical data - use quote data only
         }
 
@@ -102,7 +108,8 @@ async function getMarketData(symbol) {
             timestamp: new Date().toISOString(),
             isMarketOpen: isMarketOpen,
             marketSession: session,
-            dataAge: isMarketOpen ? 'real-time' : 'last-close'
+            dataAge: isMarketOpen ? 'real-time' : 'last-close',
+            dataInterval: interval // Show what interval was used
         };
     } catch (error) {
         console.error('Tradier API error details:');
@@ -111,9 +118,8 @@ async function getMarketData(symbol) {
         console.error('- Status Text:', error.response?.statusText);
         console.error('- Response Data:', JSON.stringify(error.response?.data, null, 2));
         console.error('- URL:', error.config?.url);
-        console.error('- Headers:', JSON.stringify(error.config?.headers, null, 2));
         
-        throw new Error(`Failed to fetch market data: ${error.response?.data?.fault?.faultstring || error.message}`);
+        throw new Error(`Failed to fetch market data: ${error.response?.data || error.message}`);
     }
 }
 
