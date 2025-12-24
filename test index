@@ -12,7 +12,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 // Active trades storage
 const activeTrades = new Map();
 
-// Tradier API configuration (Production only)
+//  configuration (Production only)
 const TRADIER_API_URL = 'https://api.tradier.com/v1';
 const BASE_URL = TRADIER_API_URL;
 
@@ -64,8 +64,8 @@ function getTradierHeaders() {
     const apiKey = process.env.TRADIER_API_KEY;
     
     // Log for debugging
-    console.log('Tradier API Key exists:', !!apiKey);
-    console.log('Tradier API Key length:', apiKey?.length);
+    console.log(' Key exists:', !!apiKey);
+    console.log(' Key length:', apiKey?.length);
     console.log('Base URL:', BASE_URL);
     
     return {
@@ -597,7 +597,14 @@ function analyzeTrend(closes, highs, lows) {
         strength = 'moderate';
     }
 
-    return { direction, strength, ema20, ema50 };
+    return {
+    direction,
+    strength,
+    ema20,
+    ema50,
+    emaStack: getEMAStack(closes)
+};
+
 }
 
 // Helper: Calculate MFI (Money Flow Index)
@@ -744,6 +751,20 @@ function calculateEMA(data, period) {
 
     return ema;
 }
+// === EMA STACK (9 / 21 / 50) ===
+function getEMAStack(closes) {
+    if (!closes || closes.length < 50) return 'mixed';
+
+    const ema9 = calculateEMA(closes, 9);
+    const ema21 = calculateEMA(closes, 21);
+    const ema50 = calculateEMA(closes, 50);
+
+    if (ema9 > ema21 && ema21 > ema50) return 'bullish';
+    if (ema9 < ema21 && ema21 < ema50) return 'bearish';
+
+    return 'mixed';
+}
+
 
 // Helper: Find support levels
 function findSupportLevels(lows, currentPrice) {
@@ -1247,7 +1268,7 @@ bot.onText(/\/test/, async (msg) => {
     
     const debugInfo = `🔍 *Configuration Check*
 
-📊 Tradier API:
+📊 :
 • Mode: ✅ PRODUCTION (real-time)
 • Base URL: \`${BASE_URL}\`
 • API Key set: ${process.env.TRADIER_API_KEY ? 'YES ✅' : 'NO ❌'}
@@ -1699,7 +1720,7 @@ const startTime = new Date().toLocaleString('en-US', {
 });
 
 console.log('🤖 Professional Scalping Bot started!');
-console.log('📊 Using Tradier API');
+console.log('📊 Using ');
 console.log('👁️ Using OpenAI Vision (gpt-4o)');
 console.log('🌍 Bot available 24/7 - Monitors market hours automatically');
 console.log('✅ Ready to scalp!');
