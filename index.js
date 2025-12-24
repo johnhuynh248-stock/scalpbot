@@ -15,17 +15,22 @@ const activeTrades = new Map();
 // Tradier API configuration
 const TRADIER_API_URL = 'https://api.tradier.com/v1';
 const TRADIER_SANDBOX_URL = 'https://sandbox.tradier.com/v1';
-const USE_SANDBOX = process.env.TRADIER_SANDBOX === 'true';
+// Handle both string "true" and boolean true
+const USE_SANDBOX = process.env.TRADIER_SANDBOX === 'true' || process.env.TRADIER_SANDBOX === true;
 const BASE_URL = USE_SANDBOX ? TRADIER_SANDBOX_URL : TRADIER_API_URL;
 
 // Helper: Get Tradier headers
 function getTradierHeaders() {
-    // Handle token with or without "Bearer" prefix
-    const token = process.env.TRADIER_API_KEY;
-    const authHeader = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
+    const apiKey = process.env.TRADIER_API_KEY;
+    
+    // Log for debugging (remove after fixing)
+    console.log('Tradier API Key exists:', !!apiKey);
+    console.log('Tradier API Key length:', apiKey?.length);
+    console.log('Using sandbox:', USE_SANDBOX);
+    console.log('Base URL:', BASE_URL);
     
     return {
-        'Authorization': authHeader,
+        'Authorization': `Bearer ${apiKey}`,
         'Accept': 'application/json'
     };
 }
@@ -36,6 +41,8 @@ async function getMarketData(symbol) {
         const session = getMarketSession();
         const isMarketOpen = session === 'regular' || session === 'pre-market' || session === 'after-hours';
         
+        console.log(`Fetching data for ${symbol} from Tradier...`);
+        
         // Get quote
         const quoteResponse = await axios.get(
             `${BASE_URL}/markets/quotes`,
@@ -44,6 +51,8 @@ async function getMarketData(symbol) {
                 headers: getTradierHeaders()
             }
         );
+
+        console.log('Quote response received:', quoteResponse.status);
 
         const quote = quoteResponse.data.quotes.quote;
         if (!quote) {
@@ -88,8 +97,15 @@ async function getMarketData(symbol) {
             dataAge: isMarketOpen ? 'real-time' : 'last-close'
         };
     } catch (error) {
-        console.error('Tradier API error:', error.message);
-        throw new Error(`Failed to fetch market data: ${error.message}`);
+        console.error('Tradier API error details:');
+        console.error('- Message:', error.message);
+        console.error('- Status:', error.response?.status);
+        console.error('- Status Text:', error.response?.statusText);
+        console.error('- Response Data:', JSON.stringify(error.response?.data, null, 2));
+        console.error('- URL:', error.config?.url);
+        console.error('- Headers:', JSON.stringify(error.config?.headers, null, 2));
+        
+        throw new Error(`Failed to fetch market data: ${error.response?.data?.fault?.faultstring || error.message}`);
     }
 }
 
@@ -565,6 +581,56 @@ ${session === 'regular' ? '✅ Best time for scalping!\n📊 Real-time data avai
 💡 Bot works 24/7 but trading only during market hours!`;
 
     bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+});
+
+// Command: /test (debug Tradier connection)
+bot.onText(/\/test/, async (msg) => {
+    const chatId = msg.chat.id;
+    
+    const debugInfo = `🔍 *Configuration Check*
+
+📊 Tradier API:
+• Sandbox mode: ${USE_SANDBOX ? 'YES ✅' : 'NO'}
+• Base URL: \`${BASE_URL}\`
+• API Key set: ${process.env.TRADIER_API_KEY ? 'YES ✅' : 'NO ❌'}
+• Key length: ${process.env.TRADIER_API_KEY?.length || 0} chars
+
+🤖 OpenAI:
+• API Key set: ${process.env.OPENAI_API_KEY ? 'YES ✅' : 'NO ❌'}
+
+📱 Telegram:
+• Bot Token set: ${process.env.BOT_TOKEN ? 'YES ✅' : 'NO ❌'}
+
+Testing Tradier connection...`;
+
+    await bot.sendMessage(chatId, debugInfo, { parse_mode: 'Markdown' });
+    
+    try {
+        const testData = await getMarketData('SPY');
+        const successMsg = `✅ *Tradier Connection: SUCCESS!*
+
+💰 SPY Data Retrieved:
+• Price: $${testData.price}
+• Change: ${testData.changePercent}%
+• Volume: ${testData.volume?.toLocaleString()}
+• Session: ${testData.marketSession}
+
+🎉 Everything working! Try \`/analyze SPY\``;
+        
+        bot.sendMessage(chatId, successMsg, { parse_mode: 'Markdown' });
+    } catch (error) {
+        const errorMsg = `❌ *Tradier Connection: FAILED*
+
+Error: ${error.message}
+
+🔧 Check Railway logs for details.
+Make sure:
+• TRADIER_API_KEY is set correctly
+• TRADIER_SANDBOX=true (for sandbox)
+• Token is valid`;
+        
+        bot.sendMessage(chatId, errorMsg, { parse_mode: 'Markdown' });
+    }
 });
 
 // Command: /analyze or /scalp or /check (text analysis)
