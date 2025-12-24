@@ -1084,12 +1084,23 @@ async function analyzeTextMultiTF(symbol, direction = null, tradingStyle = 'scal
     try {
         const marketData = await getMarketDataMultiTF(symbol, tradingStyle);
         
-        // Use HTF indicators for main analysis
-        const indicators = marketData.htf.indicators;
+// Use HTF indicators for main analysis
+const indicators = marketData.htf.indicators;
 const systemConfidence = computeConfidence(indicators);
-const allowTrade = systemConfidence >= 65;
-        console.log('DEBUG CONFIDENCE:', systemConfidence, 'ALLOW:', allowTrade);
-        let optionPick = null;
+
+// Base permission
+let allowTrade = systemConfidence >= 65;
+
+// 🔒 LTF FAIL-SAFE (SCALPING ONLY)
+if (tradingStyle === 'scalping') {
+    if (!marketData.ltf || !marketData.ltf.valid || !marketData.ltf.indicators) {
+        allowTrade = false;
+        console.log('LTF MISSING → SCALPING TRADE BLOCKED');
+    }
+}
+
+console.log('DEBUG CONFIDENCE:', systemConfidence, 'ALLOW:', allowTrade);
+let optionPick = null;
 
 if (allowTrade && direction) {
     try {
