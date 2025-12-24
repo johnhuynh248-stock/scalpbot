@@ -20,8 +20,12 @@ const BASE_URL = USE_SANDBOX ? TRADIER_SANDBOX_URL : TRADIER_API_URL;
 
 // Helper: Get Tradier headers
 function getTradierHeaders() {
+    // Handle token with or without "Bearer" prefix
+    const token = process.env.TRADIER_API_KEY;
+    const authHeader = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
+    
     return {
-        'Authorization': `Bearer ${process.env.TRADIER_API_KEY}`,
+        'Authorization': authHeader,
         'Accept': 'application/json'
     };
 }
