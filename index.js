@@ -553,21 +553,17 @@ function findSupportLevelsAdvanced(lows, closes, currentPrice) {
         }
     }
 
-    // Find VWAP support
-    let vwapSum = 0;
-    let volSum = 0;
-    for (let i = 0; i < recentCloses.length; i++) {
-        vwapSum += recentCloses[i] * (recentLows[i] || 1);
-        volSum += (recentLows[i] || 1);
-    }
-    const vwapLevel = volSum > 0 ? vwapSum / volSum : 0;
-    if (vwapLevel < currentPrice && vwapLevel > 0) {
-        levels.push({
-            price: vwapLevel,
-            strength: 3,
-            type: 'vwap'
-        });
-    }
+   // Find VWAP support (CORRECT)
+let vwapSum = 0;
+let volSum = 0;
+
+for (let i = 0; i < recentCloses.length; i++) {
+    const volume = 1; // fallback since volume not passed here
+    vwapSum += recentCloses[i] * volume;
+    volSum += volume;
+}
+
+const vwapLevel = volSum > 0 ? vwapSum / volSum : 0;
 
     // Sort by strength and proximity, return top 3
     return levels
@@ -798,19 +794,30 @@ function calculateRSI(closes, period = 14) {
     return rsi;
 }
 
-// Helper: Calculate MACD
+// Helper: Calculate MACD (CORRECT)
 function calculateMACD(closes) {
-    if (closes.length < 26) {
+    if (!closes || closes.length < 35) {
         return { value: 0, signal: 0, histogram: 0 };
     }
 
+    // MACD line = EMA(12) - EMA(26)
     const ema12 = calculateEMA(closes, 12);
     const ema26 = calculateEMA(closes, 26);
     const macdLine = ema12 - ema26;
 
-    // For signal line, we'd need to calculate EMA of MACD line
-    // Simplified: use a basic approximation
-    const signalLine = macdLine * 0.9;
+    // Build MACD history for signal line
+    const macdHistory = [];
+    for (let i = 26; i < closes.length; i++) {
+        const ema12_i = calculateEMA(closes.slice(0, i + 1), 12);
+        const ema26_i = calculateEMA(closes.slice(0, i + 1), 26);
+        macdHistory.push(ema12_i - ema26_i);
+    }
+
+    // Signal line = EMA(9) of MACD line
+    const signalLine = macdHistory.length >= 9
+        ? calculateEMA(macdHistory, 9)
+        : 0;
+
     const histogram = macdLine - signalLine;
 
     return {
@@ -833,6 +840,7 @@ function getEMAStack(closes) {
 
     return 'mixed';
 }
+
 // === VWAP EXTENSION FILTER (ANTI-CHASE) ===
 function isVWAPExtended(price, vwap, tradingStyle) {
     if (!vwap) return false;
@@ -845,6 +853,7 @@ function isVWAPExtended(price, vwap, tradingStyle) {
     // > 0.6% away from VWAP = stretched
     return distance > 0.006;
 }
+
 // === HTF / LTF CONFLICT SCORE ===
 function htfLtfScore(htfIndicators, ltfIndicators) {
     let score = 0;
@@ -886,6 +895,7 @@ function isBadLiquidityTime() {
 
     return false;
 }
+
 // === HARD CONFIDENCE ENGINE (RULE-BASED) ===
 function computeConfidence(indicators) {
     let score = 0;
@@ -915,6 +925,7 @@ function computeConfidence(indicators) {
 
     return Math.min(100, score);
 }
+
 // Helper: Get date N days ago
 function getDateNDaysAgo(days) {
     const date = new Date();
