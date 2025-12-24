@@ -802,13 +802,20 @@ async function analyzeText(symbol, direction = null) {
                              marketData.indicators.strength >= 50 ? '👍' : '⚠️';
         
         // Format support/resistance with emojis
-        const supportText = marketData.indicators.supportLevels.map(s => 
-            `   ${s.strength === 'strong' ? '🛡️' : s.strength === 'moderate' ? '🔵' : '⚪'} $${s.price} (${s.strength} ${s.type})`
-        ).join('\n');
+        const supportText = marketData.indicators.supportLevels && marketData.indicators.supportLevels.length > 0
+            ? marketData.indicators.supportLevels.map(s => 
+                `   ${s.strength === 'strong' ? '🛡️' : s.strength === 'moderate' ? '🔵' : '⚪'} $${s.price} (${s.strength} ${s.type})`
+              ).join('\n')
+            : '   ⚪ No clear support detected (limited data)';
         
-        const resistanceText = marketData.indicators.resistanceLevels.map(r => 
-            `   ${r.strength === 'strong' ? '🚧' : r.strength === 'moderate' ? '🟠' : '⚪'} $${r.price} (${r.strength} ${r.type})`
-        ).join('\n');
+        const resistanceText = marketData.indicators.resistanceLevels && marketData.indicators.resistanceLevels.length > 0
+            ? marketData.indicators.resistanceLevels.map(r => 
+                `   ${r.strength === 'strong' ? '🚧' : r.strength === 'moderate' ? '🟠' : '⚪'} $${r.price} (${r.strength} ${r.type})`
+              ).join('\n')
+            : '   ⚪ No clear resistance detected (limited data)';
+        
+        console.log('Support levels found:', marketData.indicators.supportLevels?.length || 0);
+        console.log('Resistance levels found:', marketData.indicators.resistanceLevels?.length || 0);
 
         const prompt = `Phân tích SCALPING chuyên nghiệp cho ${symbol}${direction ? ' - ' + direction : ''}:
 
@@ -839,10 +846,10 @@ async function analyzeText(symbol, direction = null) {
 • BB Position: ${marketData.indicators.bollingerBands.position === 'upper' ? '🔴 Near upper' : marketData.indicators.bollingerBands.position === 'lower' ? '🟢 Near lower' : '🟡 Middle'}
 
 🛡️ SUPPORT LEVELS (gần nhất):
-${supportText || '   ⚪ No clear support detected'}
+${supportText}
 
 🚧 RESISTANCE LEVELS (gần nhất):
-${resistanceText || '   ⚪ No clear resistance detected'}
+${resistanceText}
 
 🔄 VOLUME ANALYSIS:
 • Profile: ${volumeEmoji} ${marketData.indicators.volumeAnalysis.profile}
@@ -1054,6 +1061,15 @@ Testing Tradier connection...`;
     
     try {
         const testData = await getMarketData('SPY');
+        
+        const supportInfo = testData.indicators.supportLevels && testData.indicators.supportLevels.length > 0
+            ? testData.indicators.supportLevels.map(s => `\n• $${s.price} (${s.strength} ${s.type})`).join('')
+            : '\n• None detected';
+        
+        const resistanceInfo = testData.indicators.resistanceLevels && testData.indicators.resistanceLevels.length > 0
+            ? testData.indicators.resistanceLevels.map(r => `\n• $${r.price} (${r.strength} ${r.type})`).join('')
+            : '\n• None detected';
+        
         const successMsg = `✅ *Tradier Connection: SUCCESS!*
 
 💰 SPY Data Retrieved:
@@ -1061,6 +1077,17 @@ Testing Tradier connection...`;
 • Change: ${testData.changePercent}%
 • Volume: ${testData.volume?.toLocaleString()}
 • Session: ${testData.marketSession}
+• Data interval: ${testData.dataInterval}
+
+📊 Indicators Test:
+• RSI: ${testData.indicators.rsi.toFixed(1)}
+• MACD: ${testData.indicators.macd.histogram.toFixed(4)}
+• MFI: ${testData.indicators.mfi.toFixed(1)}
+• Trend: ${testData.indicators.trend.direction}
+
+🛡️ Support levels:${supportInfo}
+
+🚧 Resistance levels:${resistanceInfo}
 
 🎉 Everything working! Try \`/analyze SPY\``;
         
