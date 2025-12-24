@@ -688,7 +688,24 @@ function calculateStrength(rsi, macd, momentum, volumeAnalysis) {
 
     return Math.max(10, Math.min(90, score));
 }
+// Helper: Calculate EMA
+function calculateEMA(data, period) {
+    if (!data || data.length < period) {
+        return data?.[data.length - 1] || 0;
+    }
 
+    const multiplier = 2 / (period + 1);
+
+    // Start with SMA
+    let ema = data.slice(0, period).reduce((a, b) => a + b, 0) / period;
+
+    // Continue EMA
+    for (let i = period; i < data.length; i++) {
+        ema = (data[i] - ema) * multiplier + ema;
+    }
+
+    return ema;
+}
 // Helper: Calculate RSI
 function calculateRSI(closes, period = 14) {
     if (closes.length < period + 1) return 50;
