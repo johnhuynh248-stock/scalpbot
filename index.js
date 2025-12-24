@@ -12,12 +12,15 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 // Active trades storage
 const activeTrades = new Map();
 
-// Tradier API configuration
+// Tradier API configuration (Production only)
 const TRADIER_API_URL = 'https://api.tradier.com/v1';
-const TRADIER_SANDBOX_URL = 'https://sandbox.tradier.com/v1';
-// Handle both string "true" and boolean true
-const USE_SANDBOX = process.env.TRADIER_SANDBOX === 'true' || process.env.TRADIER_SANDBOX === true;
-const BASE_URL = USE_SANDBOX ? TRADIER_SANDBOX_URL : TRADIER_API_URL;
+const BASE_URL = TRADIER_API_URL;
+
+console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+console.log('🚀 BOT STARTING...');
+console.log('📊 Tradier Mode: ✅ PRODUCTION (real-time)');
+console.log(`🌐 API URL: ${BASE_URL}`);
+console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
 // Trading timeframes configuration
 const TIMEFRAMES = {
@@ -60,10 +63,9 @@ const TIMEFRAMES = {
 function getTradierHeaders() {
     const apiKey = process.env.TRADIER_API_KEY;
     
-    // Log for debugging (remove after fixing)
+    // Log for debugging
     console.log('Tradier API Key exists:', !!apiKey);
     console.log('Tradier API Key length:', apiKey?.length);
-    console.log('Using sandbox:', USE_SANDBOX);
     console.log('Base URL:', BASE_URL);
     
     return {
@@ -99,8 +101,8 @@ async function getMarketDataMultiTF(symbol, tradingStyle = 'scalping') {
         }
 
         // Get data for HTF (Higher Timeframe) and LTF (Lower Timeframe)
-        const htfInterval = USE_SANDBOX ? 'daily' : config.htf;
-        const ltfInterval = USE_SANDBOX ? 'daily' : config.ltf;
+        const htfInterval = config.htf;
+        const ltfInterval = config.ltf;
         
         let htfData = [];
         let ltfData = [];
@@ -126,27 +128,25 @@ async function getMarketDataMultiTF(symbol, tradingStyle = 'scalping') {
             console.warn(`HTF data error:`, error.message);
         }
 
-        // Fetch LTF data (only in production)
-        if (!USE_SANDBOX) {
-            try {
-                const ltfResponse = await axios.get(
-                    `${BASE_URL}/markets/history`,
-                    {
-                        params: {
-                            symbol: symbol,
-                            interval: ltfInterval,
-                            start: getDateNDaysAgo(config.lookback),
-                            end: getTodayDate()
-                        },
-                        headers: getTradierHeaders(),
-                        timeout: 10000
-                    }
-                );
-                ltfData = ltfResponse.data.history?.day || [];
-                console.log(`LTF data (${ltfInterval}): ${ltfData.length} bars`);
-            } catch (error) {
-                console.warn(`LTF data error:`, error.message);
-            }
+        // Fetch LTF data
+        try {
+            const ltfResponse = await axios.get(
+                `${BASE_URL}/markets/history`,
+                {
+                    params: {
+                        symbol: symbol,
+                        interval: ltfInterval,
+                        start: getDateNDaysAgo(config.lookback),
+                        end: getTodayDate()
+                    },
+                    headers: getTradierHeaders(),
+                    timeout: 10000
+                }
+            );
+            ltfData = ltfResponse.data.history?.day || [];
+            console.log(`LTF data (${ltfInterval}): ${ltfData.length} bars`);
+        } catch (error) {
+            console.warn(`LTF data error:`, error.message);
         }
 
         // Calculate indicators for both timeframes
@@ -957,23 +957,23 @@ ${styleEmoji} *TRADING STYLE: ${tradingStyle.toUpperCase()}*
 • Session: ${marketData.marketSession}
 
 📈 HTF (${marketData.htf.interval}) - TREND ANALYSIS:
-• Direction: ${trendEmoji} ${indicators.trend.direction} (${indicators.trend.strength})
-• EMA20: $${indicators.trend.ema20?.toFixed(2) || 'N/A'}
-• Momentum: ${momentumEmoji} ${indicators.momentum.direction} (${indicators.momentum.acceleration})
-• Strength: ${strengthEmoji} ${indicators.strength.toFixed(0)}/100
+• Direction: ${trendEmoji} ${indicators.trend?.direction || 'unknown'} (${indicators.trend?.strength || 'unknown'})
+• EMA20: $${indicators.trend?.ema20?.toFixed(2) || 'N/A'}
+• Momentum: ${momentumEmoji} ${indicators.momentum?.direction || 'neutral'} (${indicators.momentum?.acceleration || 'stable'})
+• Strength: ${strengthEmoji} ${indicators.strength?.toFixed(0) || '50'}/100
 
 📊 LTF (${marketData.ltf.interval}) - ENTRY TIMING:
-• RSI: ${marketData.ltf.indicators.rsi.toFixed(1)} ${marketData.ltf.indicators.rsi > 70 ? '🔴' : marketData.ltf.indicators.rsi < 30 ? '🟢' : '🟡'}
-• Stoch RSI: ${marketData.ltf.indicators.stochRSI.toFixed(1)} ${marketData.ltf.indicators.stochRSI > 80 ? '⚠️' : marketData.ltf.indicators.stochRSI < 20 ? '⚡' : '➡️'}
-• MACD: ${marketData.ltf.indicators.macd.histogram >= 0 ? '🟢' : '🔴'} ${marketData.ltf.indicators.macd.histogram.toFixed(4)}
+• RSI: ${marketData.ltf?.indicators?.rsi?.toFixed(1) || '50'} ${marketData.ltf?.indicators?.rsi > 70 ? '🔴' : marketData.ltf?.indicators?.rsi < 30 ? '🟢' : '🟡'}
+• Stoch RSI: ${marketData.ltf?.indicators?.stochRSI?.toFixed(1) || '50'} ${marketData.ltf?.indicators?.stochRSI > 80 ? '⚠️' : marketData.ltf?.indicators?.stochRSI < 20 ? '⚡' : '➡️'}
+• MACD: ${marketData.ltf?.indicators?.macd?.histogram >= 0 ? '🟢' : '🔴'} ${marketData.ltf?.indicators?.macd?.histogram?.toFixed(4) || '0'}
 
 📊 TECHNICAL INDICATORS:
-• MFI(14): ${indicators.mfi.toFixed(1)} ${indicators.mfi > 80 ? '💰 Strong buying' : indicators.mfi < 20 ? '📉 Strong selling' : '➡️ Balanced'}
-• ATR: ${indicators.atr.toFixed(2)} (volatility)
-• BB Position: ${indicators.bollingerBands.position === 'upper' ? '🔴 Near upper' : indicators.bollingerBands.position === 'lower' ? '🟢 Near lower' : '🟡 Middle'}
+• MFI(14): ${indicators.mfi?.toFixed(1) || '50'} ${indicators.mfi > 80 ? '💰 Strong buying' : indicators.mfi < 20 ? '📉 Strong selling' : '➡️ Balanced'}
+• ATR: ${indicators.atr?.toFixed(2) || '0'} (volatility)
+• BB Position: ${indicators.bollingerBands?.position === 'upper' ? '🔴 Near upper' : indicators.bollingerBands?.position === 'lower' ? '🟢 Near lower' : '🟡 Middle'}
 
 💹 KEY LEVELS:
-• VWAP: $${indicators.vwap.toFixed(2)} ${marketData.price > indicators.vwap ? '(Above ✅)' : '(Below ⚠️)'}
+• VWAP: $${indicators.vwap?.toFixed(2) || marketData.price} ${marketData.price > (indicators.vwap || 0) ? '(Above ✅)' : '(Below ⚠️)'}
 
 🛡️ SUPPORT LEVELS:
 ${supportText}
@@ -1196,7 +1196,7 @@ bot.onText(/\/test/, async (msg) => {
     const debugInfo = `🔍 *Configuration Check*
 
 📊 Tradier API:
-• Sandbox mode: ${USE_SANDBOX ? 'YES ✅' : 'NO'}
+• Mode: ✅ PRODUCTION (real-time)
 • Base URL: \`${BASE_URL}\`
 • API Key set: ${process.env.TRADIER_API_KEY ? 'YES ✅' : 'NO ❌'}
 • Key length: ${process.env.TRADIER_API_KEY?.length || 0} chars
@@ -1241,7 +1241,7 @@ Testing Tradier connection...`;
 
 🚧 Resistance levels:${resistanceInfo}
 
-🎉 Everything working! Try \`/analyze SPY\``;
+🎉 Everything working! Try \`/scalp SPY\``;
         
         bot.sendMessage(chatId, successMsg, { parse_mode: 'Markdown' });
     } catch (error) {
@@ -1251,9 +1251,8 @@ Error: ${error.message}
 
 🔧 Check Railway logs for details.
 Make sure:
-• TRADIER_API_KEY is set correctly
-• TRADIER_SANDBOX=true (for sandbox)
-• Token is valid`;
+• TRADIER_API_KEY is set correctly (production token)
+• Token is valid and active`;
         
         bot.sendMessage(chatId, errorMsg, { parse_mode: 'Markdown' });
     }
@@ -1672,10 +1671,10 @@ async function displayAnalysis(chatId, processingMsgId, result, symbol) {
         'closed': '🌙'
     }[result.marketData.marketSession] || '📊';
     
-    const trendEmoji = result.marketData.htf.indicators.trend.direction === 'uptrend' ? '📈' : 
-                      result.marketData.htf.indicators.trend.direction === 'downtrend' ? '📉' : '➡️';
+    const trendEmoji = result.marketData.htf?.indicators?.trend?.direction === 'uptrend' ? '📈' : 
+                      result.marketData.htf?.indicators?.trend?.direction === 'downtrend' ? '📉' : '➡️';
     
-    const changeEmoji = result.marketData.changePercent >= 0 ? '🟢' : '🔴';
+    const changeEmoji = (result.marketData.changePercent || 0) >= 0 ? '🟢' : '🔴';
     
     const styleEmoji = {
         'scalping': '⚡',
@@ -1692,20 +1691,20 @@ ${result.analysis}
 ━━━━━━━━━━━━━━━━━━━
 💰 *QUICK STATS:*
 ${changeEmoji} Price: $${result.marketData.price} (${result.marketData.dataAge === 'last-close' ? '⏸️ Last Close' : '⚡ Live'})
-${trendEmoji} HTF Trend: ${result.marketData.htf.indicators.trend.direction}
-📊 Change: ${changeEmoji} ${result.marketData.changePercent}%
-💹 VWAP: $${result.marketData.htf.indicators.vwap.toFixed(2)}
+${trendEmoji} HTF Trend: ${result.marketData.htf?.indicators?.trend?.direction || 'unknown'}
+📊 Change: ${changeEmoji} ${result.marketData.changePercent || 0}%
+💹 VWAP: $${result.marketData.htf?.indicators?.vwap?.toFixed(2) || result.marketData.price}
 ${sessionEmoji} Session: ${result.marketData.marketSession}
 
-🎯 *TARGETS (R:R ${result.marketData.targets.rr2}:1):*
-💰 Entry: $${result.marketData.targets.entry}
-🎯 TP1: $${result.marketData.targets.tp1} (+${result.marketData.targets.tp1_percent}%)
-🎯 TP2: $${result.marketData.targets.tp2} (+${result.marketData.targets.tp2_percent}%)
-🛑 SL: $${result.marketData.targets.sl} (${result.marketData.targets.sl_percent}%)
-⏱️ Hold: ${result.marketData.targets.hold_time}
+🎯 *TARGETS (R:R ${result.marketData.targets?.rr2 || '1.5'}:1):*
+💰 Entry: $${result.marketData.targets?.entry || result.marketData.price}
+🎯 TP1: $${result.marketData.targets?.tp1 || 'N/A'} (+${result.marketData.targets?.tp1_percent || '0'}%)
+🎯 TP2: $${result.marketData.targets?.tp2 || 'N/A'} (+${result.marketData.targets?.tp2_percent || '0'}%)
+🛑 SL: $${result.marketData.targets?.sl || 'N/A'} (${result.marketData.targets?.sl_percent || '0'}%)
+⏱️ Hold: ${result.marketData.targets?.hold_time || 'N/A'}
 
 📊 *TIMEFRAMES:*
-HTF (${result.marketData.htf.interval}) + LTF (${result.marketData.ltf.interval})
+HTF (${result.marketData.htf?.interval || '5min'}) + LTF (${result.marketData.ltf?.interval || '1min'})
 
 ⏰ Analyzed at: ${estTime} EST`;
 
