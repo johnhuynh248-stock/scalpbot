@@ -153,11 +153,12 @@ async function getMarketDataMultiTF(symbol, tradingStyle = 'scalping') {
         }
 
         // Calculate indicators for both timeframes
-        const htfIndicators = calculateIndicators(htfData, quote);
-        const ltfIndicators = htfData.length > 0 ? calculateIndicators(ltfData, quote) : htfIndicators;
+        // If no historical data, use quote data only
+        const htfIndicators = calculateIndicators(htfData.length > 0 ? htfData : [], quote);
+        const ltfIndicators = ltfData.length > 0 ? calculateIndicators(ltfData, quote) : htfIndicators;
 
         // Calculate R:R adjusted TP/SL
-        const targets = calculateTargets(quote.last, config, htfIndicators.atr);
+        const targets = calculateTargets(quote.last || quote.prevclose, config, htfIndicators.atr || 0);
 
         return {
             symbol: symbol,
@@ -1174,7 +1175,33 @@ Chúc bạn trade thành công! 📊`;
     bot.sendMessage(chatId, help, { parse_mode: 'Markdown' });
 });
 
-// Command: /session
+// Command: /debug (check token format)
+bot.onText(/\/debug/, async (msg) => {
+    const chatId = msg.chat.id;
+    
+    const token = process.env.TRADIER_API_KEY;
+    
+    const debugInfo = `🔍 *DEBUG INFO*
+
+📊 Token Analysis:
+• Exists: ${!!token}
+• Length: ${token?.length || 0}
+• First 4 chars: ${token?.substring(0, 4) || 'N/A'}
+• Last 4 chars: ${token?.slice(-4) || 'N/A'}
+• Has spaces: ${token?.includes(' ') ? 'YES ⚠️' : 'NO ✅'}
+• Has quotes: ${token?.includes('"') || token?.includes("'") ? 'YES ⚠️' : 'NO ✅'}
+• Has newlines: ${token?.includes('\\n') ? 'YES ⚠️' : 'NO ✅'}
+
+🔤 Token type: ${typeof token}
+
+📝 Raw length: ${token ? Buffer.from(token).length : 0} bytes
+📝 String length: ${token?.length || 0} chars
+
+🔐 Authorization header:
+\`Bearer ${token?.substring(0, 4)}...${token?.slice(-4)}\``;
+
+    bot.sendMessage(chatId, debugInfo, { parse_mode: 'Markdown' });
+});
 bot.onText(/\/session/, (msg) => {
     const chatId = msg.chat.id;
     const session = getMarketSession();
@@ -1232,13 +1259,16 @@ Testing Tradier connection...`;
     try {
         const testData = await getMarketData('SPY');
         
-        const supportInfo = testData.indicators.supportLevels && testData.indicators.supportLevels.length > 0
-            ? testData.indicators.supportLevels.map(s => `\n• $${s.price} (${s.strength} ${s.type})`).join('')
-            : '\n• None detected';
+        // Handle both old and new data structures
+        const indicators = testData.indicators || testData.htf?.indicators || {};
         
-        const resistanceInfo = testData.indicators.resistanceLevels && testData.indicators.resistanceLevels.length > 0
-            ? testData.indicators.resistanceLevels.map(r => `\n• $${r.price} (${r.strength} ${r.type})`).join('')
-            : '\n• None detected';
+        const supportInfo = indicators.supportLevels && indicators.supportLevels.length > 0
+            ? indicators.supportLevels.map(s => `\n• $${s.price} (${s.strength} ${s.type})`).join('')
+            : '\n• None detected (limited data)';
+        
+        const resistanceInfo = indicators.resistanceLevels && indicators.resistanceLevels.length > 0
+            ? indicators.resistanceLevels.map(r => `\n• $${r.price} (${r.strength} ${r.type})`).join('')
+            : '\n• None detected (limited data)';
         
         const successMsg = `✅ *Tradier Connection: SUCCESS!*
 
@@ -1247,17 +1277,19 @@ Testing Tradier connection...`;
 • Change: ${testData.changePercent}%
 • Volume: ${testData.volume?.toLocaleString()}
 • Session: ${testData.marketSession}
-• Data interval: ${testData.dataInterval}
+• Data interval: ${testData.dataInterval || testData.htf?.interval}
 
 📊 Indicators Test:
-• RSI: ${testData.indicators.rsi.toFixed(1)}
-• MACD: ${testData.indicators.macd.histogram.toFixed(4)}
-• MFI: ${testData.indicators.mfi.toFixed(1)}
-• Trend: ${testData.indicators.trend.direction}
+• RSI: ${indicators.rsi?.toFixed(1) || 'N/A'}
+• MACD: ${indicators.macd?.histogram?.toFixed(4) || 'N/A'}
+• MFI: ${indicators.mfi?.toFixed(1) || 'N/A'}
+• Trend: ${indicators.trend?.direction || 'N/A'}
 
 🛡️ Support levels:${supportInfo}
 
 🚧 Resistance levels:${resistanceInfo}
+
+${htfData && htfData.length === 0 ? '⚠️ Note: Limited historical data available' : ''}
 
 🎉 Everything working! Try \`/scalp SPY\``;
         
