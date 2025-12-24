@@ -19,6 +19,43 @@ const TRADIER_SANDBOX_URL = 'https://sandbox.tradier.com/v1';
 const USE_SANDBOX = process.env.TRADIER_SANDBOX === 'true' || process.env.TRADIER_SANDBOX === true;
 const BASE_URL = USE_SANDBOX ? TRADIER_SANDBOX_URL : TRADIER_API_URL;
 
+// Trading timeframes configuration
+const TIMEFRAMES = {
+    scalping: {
+        intervals: ['1min', '3min', '5min'],
+        htf: '5min',    // Higher timeframe
+        ltf: '1min',    // Lower timeframe
+        lookback: 1,    // 1 day
+        tp1: 0.003,     // 0.3% TP1
+        tp2: 0.006,     // 0.6% TP2
+        sl: 0.005,      // 0.5% SL
+        rr_min: 1.5,    // Minimum R:R ratio
+        hold_time: '5-15 min'
+    },
+    daytrading: {
+        intervals: ['5min', '15min', '1h'],
+        htf: '15min',
+        ltf: '5min',
+        lookback: 2,    // 2 days
+        tp1: 0.008,     // 0.8% TP1
+        tp2: 0.015,     // 1.5% TP2
+        sl: 0.008,      // 0.8% SL
+        rr_min: 1.5,
+        hold_time: '30-90 min'
+    },
+    swing: {
+        intervals: ['1h', '4h', 'daily'],
+        htf: '4h',
+        ltf: '1h',
+        lookback: 10,   // 10 days
+        tp1: 0.025,     // 2.5% TP1
+        tp2: 0.05,      // 5.0% TP2
+        sl: 0.02,       // 2.0% SL
+        rr_min: 2.0,
+        hold_time: '1-5 days'
+    }
+};
+
 // Helper: Get Tradier headers
 function getTradierHeaders() {
     const apiKey = process.env.TRADIER_API_KEY;
@@ -35,15 +72,17 @@ function getTradierHeaders() {
     };
 }
 
-// Helper: Get market data from Tradier
-async function getMarketData(symbol) {
+// Helper: Get market data from Tradier with multiple timeframes
+async function getMarketDataMultiTF(symbol, tradingStyle = 'scalping') {
     try {
         const session = getMarketSession();
         const isMarketOpen = session === 'regular' || session === 'pre-market' || session === 'after-hours';
         
-        console.log(`Fetching data for ${symbol} from Tradier...`);
+        const config = TIMEFRAMES[tradingStyle];
         
-        // Get quote
+        console.log(`Fetching ${tradingStyle} data for ${symbol} from Tradier...`);
+        
+        // Get quote (always needed)
         const quoteResponse = await axios.get(
             `${BASE_URL}/markets/quotes`,
             {
@@ -59,38 +98,63 @@ async function getMarketData(symbol) {
             throw new Error('Invalid symbol or no data available');
         }
 
-        // Get historical data for indicators
-        // Production supports: 1min, 5min, 15min intervals
-        // Sandbox only supports: daily
-        let history = [];
-        const interval = USE_SANDBOX ? 'daily' : '5min'; // Use 5min for production, daily for sandbox
+        // Get data for HTF (Higher Timeframe) and LTF (Lower Timeframe)
+        const htfInterval = USE_SANDBOX ? 'daily' : config.htf;
+        const ltfInterval = USE_SANDBOX ? 'daily' : config.ltf;
         
+        let htfData = [];
+        let ltfData = [];
+        
+        // Fetch HTF data
         try {
-            const historyResponse = await axios.get(
+            const htfResponse = await axios.get(
                 `${BASE_URL}/markets/history`,
                 {
                     params: {
                         symbol: symbol,
-                        interval: interval,
-                        start: USE_SANDBOX ? getDateNDaysAgo(10) : getDateNDaysAgo(2), // More days for daily, less for intraday
+                        interval: htfInterval,
+                        start: getDateNDaysAgo(config.lookback * 2),
                         end: getTodayDate()
                     },
                     headers: getTradierHeaders(),
-                    timeout: 10000 // 10 second timeout
+                    timeout: 10000
                 }
             );
-            history = historyResponse.data.history?.day || [];
-            console.log(`History data retrieved: ${history.length} ${interval} bars`);
-        } catch (histError) {
-            console.warn('Historical data error:', histError.message);
-            if (USE_SANDBOX) {
-                console.warn('Using sandbox - limited to daily data');
-            }
-            // Continue without historical data - use quote data only
+            htfData = htfResponse.data.history?.day || [];
+            console.log(`HTF data (${htfInterval}): ${htfData.length} bars`);
+        } catch (error) {
+            console.warn(`HTF data error:`, error.message);
         }
 
-        // Calculate indicators (will use limited data if history fails)
-        const indicators = calculateIndicators(history, quote);
+        // Fetch LTF data (only in production)
+        if (!USE_SANDBOX) {
+            try {
+                const ltfResponse = await axios.get(
+                    `${BASE_URL}/markets/history`,
+                    {
+                        params: {
+                            symbol: symbol,
+                            interval: ltfInterval,
+                            start: getDateNDaysAgo(config.lookback),
+                            end: getTodayDate()
+                        },
+                        headers: getTradierHeaders(),
+                        timeout: 10000
+                    }
+                );
+                ltfData = ltfResponse.data.history?.day || [];
+                console.log(`LTF data (${ltfInterval}): ${ltfData.length} bars`);
+            } catch (error) {
+                console.warn(`LTF data error:`, error.message);
+            }
+        }
+
+        // Calculate indicators for both timeframes
+        const htfIndicators = calculateIndicators(htfData, quote);
+        const ltfIndicators = htfData.length > 0 ? calculateIndicators(ltfData, quote) : htfIndicators;
+
+        // Calculate R:R adjusted TP/SL
+        const targets = calculateTargets(quote.last, config, htfIndicators.atr);
 
         return {
             symbol: symbol,
@@ -104,23 +168,76 @@ async function getMarketData(symbol) {
             low: quote.low,
             open: quote.open,
             prevClose: quote.prevclose,
-            indicators: indicators,
+            htf: {
+                interval: htfInterval,
+                indicators: htfIndicators
+            },
+            ltf: {
+                interval: ltfInterval,
+                indicators: ltfIndicators
+            },
+            targets: targets,
+            tradingStyle: tradingStyle,
             timestamp: new Date().toISOString(),
             isMarketOpen: isMarketOpen,
             marketSession: session,
             dataAge: isMarketOpen ? 'real-time' : 'last-close',
-            dataInterval: interval // Show what interval was used
+            dataInterval: htfInterval
         };
     } catch (error) {
         console.error('Tradier API error details:');
         console.error('- Message:', error.message);
         console.error('- Status:', error.response?.status);
-        console.error('- Status Text:', error.response?.statusText);
         console.error('- Response Data:', JSON.stringify(error.response?.data, null, 2));
-        console.error('- URL:', error.config?.url);
         
         throw new Error(`Failed to fetch market data: ${error.response?.data || error.message}`);
     }
+}
+
+// Helper: Calculate targets with R:R ratio
+function calculateTargets(entryPrice, config, atr) {
+    // Base calculations
+    const baseTP1 = entryPrice * (1 + config.tp1);
+    const baseTP2 = entryPrice * (1 + config.tp2);
+    const baseSL = entryPrice * (1 - config.sl);
+    
+    // ATR-adjusted (if ATR is significant)
+    const atrMultiplier = atr > 0 ? Math.min(atr / entryPrice, 0.02) : 0;
+    
+    // Adjusted for volatility
+    const tp1 = baseTP1 + (entryPrice * atrMultiplier * 0.5);
+    const tp2 = baseTP2 + (entryPrice * atrMultiplier);
+    const sl = baseSL - (entryPrice * atrMultiplier * 0.3);
+    
+    // Calculate R:R ratios
+    const risk = entryPrice - sl;
+    const reward1 = tp1 - entryPrice;
+    const reward2 = tp2 - entryPrice;
+    
+    const rr1 = risk > 0 ? reward1 / risk : 0;
+    const rr2 = risk > 0 ? reward2 / risk : 0;
+    
+    return {
+        entry: entryPrice,
+        tp1: parseFloat(tp1.toFixed(2)),
+        tp2: parseFloat(tp2.toFixed(2)),
+        sl: parseFloat(sl.toFixed(2)),
+        tp1_percent: ((tp1 - entryPrice) / entryPrice * 100).toFixed(2),
+        tp2_percent: ((tp2 - entryPrice) / entryPrice * 100).toFixed(2),
+        sl_percent: ((sl - entryPrice) / entryPrice * 100).toFixed(2),
+        rr1: rr1.toFixed(2),
+        rr2: rr2.toFixed(2),
+        risk_amount: risk.toFixed(2),
+        reward1_amount: reward1.toFixed(2),
+        reward2_amount: reward2.toFixed(2),
+        hold_time: config.hold_time,
+        min_rr: config.rr_min
+    };
+}
+
+// Keep old function for backward compatibility
+async function getMarketData(symbol) {
+    return getMarketDataMultiTF(symbol, 'scalping');
 }
 
 // Helper: Calculate technical indicators
@@ -785,129 +902,164 @@ ${!marketData.isMarketOpen ? '8. ⚠️ MARKET CLOSED WARNING' : ''}`;
     }
 }
 
-// Helper: Analyze with text only
-async function analyzeText(symbol, direction = null) {
+// Helper: Analyze with text and multiple timeframes
+async function analyzeTextMultiTF(symbol, direction = null, tradingStyle = 'scalping') {
     try {
-        const marketData = await getMarketData(symbol);
+        const marketData = await getMarketDataMultiTF(symbol, tradingStyle);
+        
+        // Use HTF indicators for main analysis
+        const indicators = marketData.htf.indicators;
         
         // Get emoji indicators
-        const trendEmoji = marketData.indicators.trend.direction === 'uptrend' ? '📈' : 
-                          marketData.indicators.trend.direction === 'downtrend' ? '📉' : '➡️';
-        const momentumEmoji = marketData.indicators.momentum.direction === 'bullish' ? '🟢' : 
-                             marketData.indicators.momentum.direction === 'bearish' ? '🔴' : '🟡';
-        const volumeEmoji = marketData.indicators.volumeAnalysis.profile === 'high' ? '🔥' :
-                           marketData.indicators.volumeAnalysis.profile === 'above-average' ? '⬆️' :
-                           marketData.indicators.volumeAnalysis.profile === 'below-average' ? '⬇️' : '📊';
-        const strengthEmoji = marketData.indicators.strength >= 70 ? '💪' :
-                             marketData.indicators.strength >= 50 ? '👍' : '⚠️';
+        const trendEmoji = indicators.trend.direction === 'uptrend' ? '📈' : 
+                          indicators.trend.direction === 'downtrend' ? '📉' : '➡️';
+        const momentumEmoji = indicators.momentum.direction === 'bullish' ? '🟢' : 
+                             indicators.momentum.direction === 'bearish' ? '🔴' : '🟡';
+        const volumeEmoji = indicators.volumeAnalysis.profile === 'high' ? '🔥' :
+                           indicators.volumeAnalysis.profile === 'above-average' ? '⬆️' :
+                           indicators.volumeAnalysis.profile === 'below-average' ? '⬇️' : '📊';
+        const strengthEmoji = indicators.strength >= 70 ? '💪' :
+                             indicators.strength >= 50 ? '👍' : '⚠️';
+        
+        // Trading style emoji
+        const styleEmoji = {
+            'scalping': '⚡',
+            'daytrading': '📊',
+            'swing': '📈'
+        }[tradingStyle] || '📊';
         
         // Format support/resistance with emojis
-        const supportText = marketData.indicators.supportLevels && marketData.indicators.supportLevels.length > 0
-            ? marketData.indicators.supportLevels.map(s => 
+        const supportText = indicators.supportLevels && indicators.supportLevels.length > 0
+            ? indicators.supportLevels.map(s => 
                 `   ${s.strength === 'strong' ? '🛡️' : s.strength === 'moderate' ? '🔵' : '⚪'} $${s.price} (${s.strength} ${s.type})`
               ).join('\n')
             : '   ⚪ No clear support detected (limited data)';
         
-        const resistanceText = marketData.indicators.resistanceLevels && marketData.indicators.resistanceLevels.length > 0
-            ? marketData.indicators.resistanceLevels.map(r => 
+        const resistanceText = indicators.resistanceLevels && indicators.resistanceLevels.length > 0
+            ? indicators.resistanceLevels.map(r => 
                 `   ${r.strength === 'strong' ? '🚧' : r.strength === 'moderate' ? '🟠' : '⚪'} $${r.price} (${r.strength} ${r.type})`
               ).join('\n')
             : '   ⚪ No clear resistance detected (limited data)';
         
-        console.log('Support levels found:', marketData.indicators.supportLevels?.length || 0);
-        console.log('Resistance levels found:', marketData.indicators.resistanceLevels?.length || 0);
+        console.log('Support levels found:', indicators.supportLevels?.length || 0);
+        console.log('Resistance levels found:', indicators.resistanceLevels?.length || 0);
 
-        const prompt = `Phân tích SCALPING chuyên nghiệp cho ${symbol}${direction ? ' - ' + direction : ''}:
+        const prompt = `Phân tích ${tradingStyle.toUpperCase()} chuyên nghiệp cho ${symbol}${direction ? ' - ' + direction : ''}:
+
+${styleEmoji} *TRADING STYLE: ${tradingStyle.toUpperCase()}*
+⏱️ Hold time: ${marketData.targets.hold_time}
+🎯 Risk/Reward: Minimum ${marketData.targets.min_rr}:1
 
 📊 MARKET DATA:
 • Price: $${marketData.price}
 • Change: ${marketData.changePercent >= 0 ? '🟢' : '🔴'} ${marketData.changePercent}%
-• Volume: ${volumeEmoji} ${marketData.volume?.toLocaleString()} (${marketData.indicators.volumeAnalysis.profile})
+• Volume: ${volumeEmoji} ${marketData.volume?.toLocaleString()} (${indicators.volumeAnalysis.profile})
 • Session: ${marketData.marketSession}
 
-📈 TREND ANALYSIS:
-• Direction: ${trendEmoji} ${marketData.indicators.trend.direction} (${marketData.indicators.trend.strength})
-• EMA20: $${marketData.indicators.trend.ema20?.toFixed(2) || 'N/A'}
-• Momentum: ${momentumEmoji} ${marketData.indicators.momentum.direction} (${marketData.indicators.momentum.acceleration})
-• Strength: ${strengthEmoji} ${marketData.indicators.strength.toFixed(0)}/100
+📈 HTF (${marketData.htf.interval}) - TREND ANALYSIS:
+• Direction: ${trendEmoji} ${indicators.trend.direction} (${indicators.trend.strength})
+• EMA20: $${indicators.trend.ema20?.toFixed(2) || 'N/A'}
+• Momentum: ${momentumEmoji} ${indicators.momentum.direction} (${indicators.momentum.acceleration})
+• Strength: ${strengthEmoji} ${indicators.strength.toFixed(0)}/100
+
+📊 LTF (${marketData.ltf.interval}) - ENTRY TIMING:
+• RSI: ${marketData.ltf.indicators.rsi.toFixed(1)} ${marketData.ltf.indicators.rsi > 70 ? '🔴' : marketData.ltf.indicators.rsi < 30 ? '🟢' : '🟡'}
+• Stoch RSI: ${marketData.ltf.indicators.stochRSI.toFixed(1)} ${marketData.ltf.indicators.stochRSI > 80 ? '⚠️' : marketData.ltf.indicators.stochRSI < 20 ? '⚡' : '➡️'}
+• MACD: ${marketData.ltf.indicators.macd.histogram >= 0 ? '🟢' : '🔴'} ${marketData.ltf.indicators.macd.histogram.toFixed(4)}
 
 📊 TECHNICAL INDICATORS:
-• RSI(14): ${marketData.indicators.rsi.toFixed(1)} ${marketData.indicators.rsi > 70 ? '🔴 Overbought' : marketData.indicators.rsi < 30 ? '🟢 Oversold' : '🟡 Neutral'}
-• Stoch RSI: ${marketData.indicators.stochRSI.toFixed(1)} ${marketData.indicators.stochRSI > 80 ? '⚠️ High' : marketData.indicators.stochRSI < 20 ? '⚡ Low' : '➡️ Mid'}
-• MACD: ${marketData.indicators.macd.histogram >= 0 ? '🟢' : '🔴'} ${marketData.indicators.macd.histogram.toFixed(4)}
-• MFI(14): ${marketData.indicators.mfi.toFixed(1)} ${marketData.indicators.mfi > 80 ? '💰 Strong buying' : marketData.indicators.mfi < 20 ? '📉 Strong selling' : '➡️ Balanced'}
-• ATR: ${marketData.indicators.atr.toFixed(2)} (volatility)
+• MFI(14): ${indicators.mfi.toFixed(1)} ${indicators.mfi > 80 ? '💰 Strong buying' : indicators.mfi < 20 ? '📉 Strong selling' : '➡️ Balanced'}
+• ATR: ${indicators.atr.toFixed(2)} (volatility)
+• BB Position: ${indicators.bollingerBands.position === 'upper' ? '🔴 Near upper' : indicators.bollingerBands.position === 'lower' ? '🟢 Near lower' : '🟡 Middle'}
 
-💹 PRICE LEVELS:
-• VWAP: $${marketData.indicators.vwap.toFixed(2)} ${marketData.price > marketData.indicators.vwap ? '(Above ✅)' : '(Below ⚠️)'}
-• BB Upper: $${marketData.indicators.bollingerBands.upper.toFixed(2)}
-• BB Middle: $${marketData.indicators.bollingerBands.middle.toFixed(2)}
-• BB Lower: $${marketData.indicators.bollingerBands.lower.toFixed(2)}
-• BB Position: ${marketData.indicators.bollingerBands.position === 'upper' ? '🔴 Near upper' : marketData.indicators.bollingerBands.position === 'lower' ? '🟢 Near lower' : '🟡 Middle'}
+💹 KEY LEVELS:
+• VWAP: $${indicators.vwap.toFixed(2)} ${marketData.price > indicators.vwap ? '(Above ✅)' : '(Below ⚠️)'}
 
-🛡️ SUPPORT LEVELS (gần nhất):
+🛡️ SUPPORT LEVELS:
 ${supportText}
 
-🚧 RESISTANCE LEVELS (gần nhất):
+🚧 RESISTANCE LEVELS:
 ${resistanceText}
 
 🔄 VOLUME ANALYSIS:
-• Profile: ${volumeEmoji} ${marketData.indicators.volumeAnalysis.profile}
-• Trend: ${marketData.indicators.volumeAnalysis.trend === 'increasing' ? '📈 Increasing' : marketData.indicators.volumeAnalysis.trend === 'decreasing' ? '📉 Decreasing' : '➡️ Stable'}
-• vs Average: ${(marketData.indicators.volumeAnalysis.ratio * 100).toFixed(0)}%
+• Profile: ${volumeEmoji} ${indicators.volumeAnalysis.profile}
+• Trend: ${indicators.volumeAnalysis.trend === 'increasing' ? '📈 Increasing' : indicators.volumeAnalysis.trend === 'decreasing' ? '📉 Decreasing' : '➡️ Stable'}
+
+🎯 CALCULATED TARGETS (ATR-Adjusted):
+• Entry: $${marketData.targets.entry}
+• TP1: $${marketData.targets.tp1} (+${marketData.targets.tp1_percent}%) [R:R ${marketData.targets.rr1}:1]
+• TP2: $${marketData.targets.tp2} (+${marketData.targets.tp2_percent}%) [R:R ${marketData.targets.rr2}:1]
+• SL: $${marketData.targets.sl} (${marketData.targets.sl_percent}%)
+• Risk: $${marketData.targets.risk_amount} | Reward: $${marketData.targets.reward2_amount}
 
 📋 YÊU CẦU PHÂN TÍCH:
-Dựa trên data trên, đưa ra:
+Dựa trên ${tradingStyle} setup (hold ${marketData.targets.hold_time}), đưa ra:
 
-1. 🎯 Direction: CALL hay PUT (với emoji rõ ràng)
-2. 💭 Lý do chính (2-3 câu, Vietnamese với English terms)
-3. 💰 Entry: $${marketData.price} (current price)
-4. 🎯 TP1 (+0.5-0.8%): $X
-5. 🎯 TP2 (+1.0-1.5%): $X  
-6. 🛑 SL (-0.7-0.8%): $X
-7. 📊 Options: Strike / DTE / Delta (gợi ý cụ thể)
-8. 💯 Confidence: X% (dựa trên indicators alignment)
-9. ⏱️ Time target: X phút (10-30 phút)
+1. 🎯 Direction: CALL hay PUT
+2. 💭 Lý do chính dựa trên HTF trend + LTF entry timing
+3. ✅ Entry confirmation: HTF aligned? LTF signal clear?
+4. 📊 Verify TP/SL levels (có hợp lý với R:R >=${marketData.targets.min_rr}:1?)
+5. ⚠️ Conflicts/Warnings (nếu có)
+6. 💯 Confidence score (${tradingStyle === 'scalping' ? '>75%' : tradingStyle === 'daytrading' ? '>70%' : '>65%'} mới trade)
+7. ⏱️ Hold time target: ${marketData.targets.hold_time}
 
-CHÚ Ý: 
-- Confidence <70%: SKIP trade
-- Có conflicts giữa indicators: Nêu rõ và giảm confidence
-- Volume thấp: Cảnh báo về liquidity
-- Price gần BB extremes: Note potential reversal`;
+CHÚ Ý:
+- ${tradingStyle === 'scalping' ? 'SCALPING: TP/SL rất tight, cần volume cao + clear signal' : 
+  tradingStyle === 'daytrading' ? 'DAY TRADING: Cần HTF trend + LTF confirmation' :
+  'SWING: Focus HTF trend, bỏ qua LTF noise'}
+- R:R minimum: ${marketData.targets.min_rr}:1
+- HTF = trend bias, LTF = entry timing`;
 
         const response = await openai.chat.completions.create({
             model: 'gpt-4o',
             messages: [
                 {
                     role: 'system',
-                    content: `Bạn là chuyên gia scalping chuyên nghiệp. Phân tích ngắn gọn, rõ ràng với NHIỀU EMOJI để dễ đọc. 
+                    content: `Bạn là chuyên gia ${tradingStyle} chuyên nghiệp. Phân tích NGẮN GỌN, RÕ RÀNG với EMOJI.
                     
-Format response với emoji:
-- Direction: 🟢 CALL hoặc 🔴 PUT
-- Bullets dùng emoji phù hợp: ✅ ⚠️ 🎯 💰 🛑
-- Confidence score với emoji: 🔥 >80%, ✅ 70-80%, ⚠️ <70%
-- Trend với emoji: 📈 📉 ➡️
-- Volume với emoji: 🔥 ⬆️ ⬇️ 📊
+${tradingStyle === 'scalping' ? 
+`SCALPING (5-15 phút):
+- Tight TP/SL (0.3-0.6%)
+- Cần volume CAO 🔥
+- LTF signal rất quan trọng
+- Exit nhanh, không hold` :
+tradingStyle === 'daytrading' ?
+`DAY TRADING (30-90 phút):
+- Moderate TP/SL (0.8-1.5%)
+- HTF trend + LTF entry
+- Có thể scale out
+- Monitor trong ngày` :
+`SWING TRADING (1-5 ngày):
+- Wider TP/SL (2-5%)
+- HTF trend là chính
+- Bỏ qua LTF noise
+- Set & forget`}
 
-Chỉ trade khi confidence >70%. Response phải ngắn gọn, súc tích với emoji rõ ràng!`
+Format với emoji rõ ràng. Confidence score phải match trading style.`
                 },
                 {
                     role: 'user',
                     content: prompt
                 }
             ],
-            max_tokens: 1000,
+            max_tokens: 1200,
             temperature: 0.3
         });
 
         return {
             analysis: response.choices[0].message.content,
-            marketData: marketData
+            marketData: marketData,
+            tradingStyle: tradingStyle
         };
     } catch (error) {
         console.error('Text analysis error:', error.message);
         throw error;
     }
+}
+
+// Keep old function for backward compatibility
+async function analyzeText(symbol, direction = null) {
+    return analyzeTextMultiTF(symbol, direction, 'scalping');
 }
 
 // Command: /start
@@ -1107,61 +1259,80 @@ Make sure:
     }
 });
 
-// Command: /analyze or /scalp or /check (text analysis)
-bot.onText(/\/(analyze|scalp|check)\s+([A-Z]+)(\s+(CALL|PUT))?/i, async (msg, match) => {
+// Command: /analyze or /scalp or /check (text analysis) - defaults to scalping
+bot.onText(/\/(analyze|check)\s+([A-Z]+)(\s+(CALL|PUT))?/i, async (msg, match) => {
     const chatId = msg.chat.id;
     const symbol = match[2].toUpperCase();
     const direction = match[4] ? match[4].toUpperCase() : null;
 
     const processingMsg = await bot.sendMessage(
         chatId,
-        `⚡ Analyzing ${symbol}${direction ? ' ' + direction : ''}...\n⏱️ 10-15 seconds...`
+        `⚡ Analyzing ${symbol}${direction ? ' ' + direction : ''} (SCALPING mode)...\n⏱️ 10-15 seconds...`
     );
 
     try {
-        const result = await analyzeText(symbol, direction);
-        
-        const marketWarning = !result.marketData.isMarketOpen ? 
-            `\n⚠️ *Market ${result.marketData.marketSession.toUpperCase()}*\n⏸️ Using last close data - Not tradeable now!\n` : '';
-        
-        // Get EST time for consistency with market hours
-        const estTime = new Date().toLocaleString('en-US', { 
-            timeZone: 'America/New_York',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            hour12: true
-        });
-        
-        // Get session emoji
-        const sessionEmoji = {
-            'pre-market': '🌅',
-            'regular': '📈',
-            'after-hours': '🌆',
-            'closed': '🌙'
-        }[result.marketData.marketSession] || '📊';
-        
-        const trendEmoji = result.marketData.indicators.trend.direction === 'uptrend' ? '📈' : 
-                          result.marketData.indicators.trend.direction === 'downtrend' ? '📉' : '➡️';
-        
-        const changeEmoji = result.marketData.changePercent >= 0 ? '🟢' : '🔴';
-        
-        const response = `📊 *${symbol} SCALPING ANALYSIS*
-${marketWarning}        
-${result.analysis}
-
-━━━━━━━━━━━━━━━━━━━
-💰 *QUICK STATS:*
-${changeEmoji} Price: $${result.marketData.price} (${result.marketData.dataAge === 'last-close' ? '⏸️ Last Close' : '⚡ Live'})
-${trendEmoji} Trend: ${result.marketData.indicators.trend.direction}
-📊 Change: ${changeEmoji} ${result.marketData.changePercent}%
-💹 VWAP: $${result.marketData.indicators.vwap.toFixed(2)}
-${sessionEmoji} Session: ${result.marketData.marketSession}
-
-⏰ Analyzed at: ${estTime} EST`;
-
+        const result = await analyzeTextMultiTF(symbol, direction, 'scalping');
+        await displayAnalysis(chatId, processingMsg.message_id, result, symbol);
+    } catch (error) {
         await bot.deleteMessage(chatId, processingMsg.message_id);
-        bot.sendMessage(chatId, response, { parse_mode: 'Markdown' });
+        bot.sendMessage(chatId, `❌ Error: ${error.message}`);
+    }
+});
+
+// Command: /scalp - explicit scalping mode
+bot.onText(/\/scalp\s+([A-Z]+)(\s+(CALL|PUT))?/i, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const symbol = match[1].toUpperCase();
+    const direction = match[3] ? match[3].toUpperCase() : null;
+
+    const processingMsg = await bot.sendMessage(
+        chatId,
+        `⚡ Scalping analysis for ${symbol}${direction ? ' ' + direction : ''}...\n⏱️ 10-15 seconds...`
+    );
+
+    try {
+        const result = await analyzeTextMultiTF(symbol, direction, 'scalping');
+        await displayAnalysis(chatId, processingMsg.message_id, result, symbol);
+    } catch (error) {
+        await bot.deleteMessage(chatId, processingMsg.message_id);
+        bot.sendMessage(chatId, `❌ Error: ${error.message}`);
+    }
+});
+
+// Command: /daytrade - day trading analysis
+bot.onText(/\/daytrade\s+([A-Z]+)(\s+(CALL|PUT))?/i, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const symbol = match[1].toUpperCase();
+    const direction = match[3] ? match[3].toUpperCase() : null;
+
+    const processingMsg = await bot.sendMessage(
+        chatId,
+        `📊 Day trading analysis for ${symbol}${direction ? ' ' + direction : ''}...\n⏱️ 15-20 seconds...`
+    );
+
+    try {
+        const result = await analyzeTextMultiTF(symbol, direction, 'daytrading');
+        await displayAnalysis(chatId, processingMsg.message_id, result, symbol);
+    } catch (error) {
+        await bot.deleteMessage(chatId, processingMsg.message_id);
+        bot.sendMessage(chatId, `❌ Error: ${error.message}`);
+    }
+});
+
+// Command: /swing - swing trading analysis
+bot.onText(/\/swing\s+([A-Z]+)(\s+(CALL|PUT))?/i, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const symbol = match[1].toUpperCase();
+    const direction = match[3] ? match[3].toUpperCase() : null;
+
+    const processingMsg = await bot.sendMessage(
+        chatId,
+        `📈 Swing trading analysis for ${symbol}${direction ? ' ' + direction : ''}...\n⏱️ 15-20 seconds...`
+    );
+
+    try {
+        const result = await analyzeTextMultiTF(symbol, direction, 'swing');
+        await displayAnalysis(chatId, processingMsg.message_id, result, symbol);
     } catch (error) {
         await bot.deleteMessage(chatId, processingMsg.message_id);
         bot.sendMessage(chatId, `❌ Error: ${error.message}`);
@@ -1478,3 +1649,66 @@ console.log('🌍 Bot available 24/7 - Monitors market hours automatically');
 console.log('✅ Ready to scalp!');
 console.log(`Current session: ${getMarketSession().toUpperCase()}`);
 console.log(`EST Time: ${startTime}`);
+
+// Helper: Display analysis results
+async function displayAnalysis(chatId, processingMsgId, result, symbol) {
+    const marketWarning = !result.marketData.isMarketOpen ? 
+        `\n⚠️ *Market ${result.marketData.marketSession.toUpperCase()}*\n⏸️ Using last close data - Not tradeable now!\n` : '';
+    
+    // Get EST time
+    const estTime = new Date().toLocaleString('en-US', { 
+        timeZone: 'America/New_York',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+    });
+    
+    // Get emojis
+    const sessionEmoji = {
+        'pre-market': '🌅',
+        'regular': '📈',
+        'after-hours': '🌆',
+        'closed': '🌙'
+    }[result.marketData.marketSession] || '📊';
+    
+    const trendEmoji = result.marketData.htf.indicators.trend.direction === 'uptrend' ? '📈' : 
+                      result.marketData.htf.indicators.trend.direction === 'downtrend' ? '📉' : '➡️';
+    
+    const changeEmoji = result.marketData.changePercent >= 0 ? '🟢' : '🔴';
+    
+    const styleEmoji = {
+        'scalping': '⚡',
+        'daytrading': '📊',
+        'swing': '📈'
+    }[result.tradingStyle] || '📊';
+    
+    const styleName = result.tradingStyle.toUpperCase();
+    
+    const response = `${styleEmoji} *${symbol} ${styleName} ANALYSIS*
+${marketWarning}        
+${result.analysis}
+
+━━━━━━━━━━━━━━━━━━━
+💰 *QUICK STATS:*
+${changeEmoji} Price: $${result.marketData.price} (${result.marketData.dataAge === 'last-close' ? '⏸️ Last Close' : '⚡ Live'})
+${trendEmoji} HTF Trend: ${result.marketData.htf.indicators.trend.direction}
+📊 Change: ${changeEmoji} ${result.marketData.changePercent}%
+💹 VWAP: $${result.marketData.htf.indicators.vwap.toFixed(2)}
+${sessionEmoji} Session: ${result.marketData.marketSession}
+
+🎯 *TARGETS (R:R ${result.marketData.targets.rr2}:1):*
+💰 Entry: $${result.marketData.targets.entry}
+🎯 TP1: $${result.marketData.targets.tp1} (+${result.marketData.targets.tp1_percent}%)
+🎯 TP2: $${result.marketData.targets.tp2} (+${result.marketData.targets.tp2_percent}%)
+🛑 SL: $${result.marketData.targets.sl} (${result.marketData.targets.sl_percent}%)
+⏱️ Hold: ${result.marketData.targets.hold_time}
+
+📊 *TIMEFRAMES:*
+HTF (${result.marketData.htf.interval}) + LTF (${result.marketData.ltf.interval})
+
+⏰ Analyzed at: ${estTime} EST`;
+
+    await bot.deleteMessage(chatId, processingMsgId);
+    bot.sendMessage(chatId, response, { parse_mode: 'Markdown' });
+}
