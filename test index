@@ -764,7 +764,40 @@ function getEMAStack(closes) {
 
     return 'mixed';
 }
+// === VWAP EXTENSION FILTER (ANTI-CHASE) ===
+function isVWAPExtended(price, vwap, tradingStyle) {
+    if (!vwap) return false;
 
+    // Only strict for scalping
+    if (tradingStyle !== 'scalping') return false;
+
+    const distance = Math.abs(price - vwap) / vwap;
+
+    // > 0.6% away from VWAP = stretched
+    return distance > 0.006;
+}
+// === HTF / LTF CONFLICT SCORE ===
+function htfLtfScore(htfIndicators, ltfIndicators) {
+    let score = 0;
+
+    // If LTF doesn't exist, no trade
+    if (!htfIndicators || !ltfIndicators) return score;
+
+    const htfTrend = htfIndicators.trend?.direction;
+    const ltfMomentum = ltfIndicators.momentum?.direction;
+
+    // HTF bias + LTF momentum aligned
+    if (htfTrend === 'uptrend' && ltfMomentum === 'bullish') score += 2;
+    if (htfTrend === 'downtrend' && ltfMomentum === 'bearish') score += 2;
+
+    // Conflict = strong penalty
+    if (htfTrend && ltfMomentum && htfTrend !== ltfMomentum) score -= 3;
+
+    // Extreme LTF conditions help timing
+    if (ltfIndicators.stochRSI < 20 || ltfIndicators.stochRSI > 80) score += 1;
+
+    return score;
+}
 
 // Helper: Find support levels
 function findSupportLevels(lows, currentPrice) {
@@ -785,7 +818,53 @@ function findSupportLevels(lows, currentPrice) {
         .slice(0, 3)
         .map(l => parseFloat(l.toFixed(2)));
 }
+// === TIME-OF-DAY LIQUIDITY FILTER ===
+function isBadLiquidityTime() {
+    const now = new Date().toLocaleString('en-US', { 
+        timeZone: 'America/New_York' 
+    });
+    const date = new Date(now);
 
+    const hour = date.getHours();
+    const minute = date.getMinutes();
+
+    // Lunch chop: 12:00–13:00 EST
+    if (hour >= 12 && hour <= 13) return true;
+
+    // Last 10 minutes before close: 15:50–16:00 EST
+    if (hour === 15 && minute >= 50) return true;
+
+    return false;
+}
+// === HARD CONFIDENCE ENGINE (RULE-BASED) ===
+function computeConfidence(indicators) {
+    let score = 0;
+
+    // Trend direction
+    if (indicators.trend?.direction === 'uptrend') score += 20;
+    if (indicators.trend?.direction === 'downtrend') score += 20;
+
+    // EMA stack alignment
+    if (indicators.trend?.emaStack === 'bullish') score += 20;
+    if (indicators.trend?.emaStack === 'bearish') score += 20;
+
+    // Momentum
+    if (indicators.momentum?.direction === 'bullish') score += 15;
+    if (indicators.momentum?.direction === 'bearish') score += 15;
+
+    // Volume confirmation
+    if (indicators.volumeAnalysis?.profile === 'high') score += 15;
+    if (indicators.volumeAnalysis?.profile === 'above-average') score += 8;
+
+    // RSI sweet spot (avoid extremes)
+    if (indicators.rsi > 50 && indicators.rsi < 70) score += 10;
+    if (indicators.rsi < 50 && indicators.rsi > 30) score += 10;
+
+    // Stoch RSI not overextended
+    if (indicators.stochRSI < 80 && indicators.stochRSI > 20) score += 10;
+
+    return Math.min(100, score);
+}
 // Helper: Find resistance levels
 function findResistanceLevels(highs, currentPrice) {
     const recentHighs = highs.slice(-50);
@@ -956,7 +1035,18 @@ async function analyzeTextMultiTF(symbol, direction = null, tradingStyle = 'scal
         
         // Use HTF indicators for main analysis
         const indicators = marketData.htf.indicators;
-        
+const systemConfidence = computeConfidence(indicators);
+const badLiquidity = isBadLiquidityTime();
+const conflictScore = htfLtfScore(
+    marketData.htf.indicators,
+    marketData.ltf?.indicators
+);
+        const vwapExtended = isVWAPExtended(
+    marketData.price,
+    indicators.vwap,
+    tradingStyle
+);
+
         // Get emoji indicators
         const trendEmoji = indicators.trend.direction === 'uptrend' ? '📈' : 
                           indicators.trend.direction === 'downtrend' ? '📉' : '➡️';
@@ -999,9 +1089,19 @@ ${styleEmoji} *TRADING STYLE: ${tradingStyle.toUpperCase()}*
 
 📊 MARKET DATA:
 • Price: $${marketData.price}
+• VWAP Extension: ${vwapExtended ? '⚠️ EXTENDED (avoid chasing)' : '✅ OK'}
+• HTF / LTF Alignment Score: ${conflictScore} (≤0 = WAIT, ≥3 = TRADE)
+• Liquidity Window: ${badLiquidity ? '❌ LOW (avoid scalping)' : '✅ GOOD'}
 • Change: ${marketData.changePercent >= 0 ? '🟢' : '🔴'} ${marketData.changePercent}%
 • Volume: ${volumeEmoji} ${marketData.volume?.toLocaleString()} (${indicators.volumeAnalysis.profile})
 • Session: ${marketData.marketSession}
+🧠 SYSTEM CONFIDENCE (RULE-BASED):
+• Score: ${systemConfidence}%
+• Rule:
+  - <65% → SKIP
+  - 65–74% → WAIT / LOW SIZE
+  - ≥75% → VALID TRADE
+  - If AI confidence differs by >15%, USE THE LOWER VALUE
 
 📈 HTF (${marketData.htf.interval}) - TREND ANALYSIS:
 • Direction: ${trendEmoji} ${indicators.trend?.direction || 'unknown'} (${indicators.trend?.strength || 'unknown'})
