@@ -73,6 +73,71 @@ function getTradierHeaders() {
         'Accept': 'application/json'
     };
 }
+// === OPTIONS CHAIN FETCH (TRADIER) ===
+async function getOptionsChain(symbol, expiration) {
+    const response = await axios.get(
+        `${BASE_URL}/markets/options/chains`,
+        {
+            params: {
+                symbol,
+                expiration,
+                greeks: true
+            },
+            headers: getTradierHeaders()
+        }
+    );
+
+    const options = response.data?.options?.option;
+    return Array.isArray(options) ? options : [];
+}
+// === GET NEAREST EXPIRATION (1–3 DTE) ===
+async function getNearestExpiration(symbol, maxDTE = 3) {
+    const response = await axios.get(
+        `${BASE_URL}/markets/options/expirations`,
+        {
+            params: { symbol },
+            headers: getTradierHeaders()
+        }
+    );
+
+    const expirations = response.data?.expirations?.date || [];
+    const today = new Date();
+
+    return expirations.find(date => {
+        const dte = (new Date(date) - today) / (1000 * 60 * 60 * 24);
+        return dte >= 0 && dte <= maxDTE;
+    });
+}
+// === PICK BEST OPTION (STRIKE + DELTA) ===
+function pickBestOption(options, direction, underlyingPrice) {
+    const isCall = direction === 'CALL';
+
+    const filtered = options.filter(opt => {
+        if (isCall && opt.option_type !== 'call') return false;
+        if (!isCall && opt.option_type !== 'put') return false;
+
+        const delta = Math.abs(opt.greeks?.delta || 0);
+
+        return (
+            delta >= 0.45 &&
+            delta <= 0.65 &&
+            opt.bid > 0 &&
+            opt.ask > 0
+        );
+    });
+
+    // ❌ No liquid contracts
+    if (filtered.length === 0) return null;
+
+    // ✅ Prefer ATM or 1 OTM
+    filtered.sort((a, b) => {
+        const distA = Math.abs(a.strike - underlyingPrice);
+        const distB = Math.abs(b.strike - underlyingPrice);
+        return distA - distB;
+    });
+
+    return filtered[0];
+}
 
 // Helper: Get market data from Tradier with multiple timeframes
 async function getMarketDataMultiTF(symbol, tradingStyle = 'scalping') {
@@ -1002,6 +1067,23 @@ async function analyzeTextMultiTF(symbol, direction = null, tradingStyle = 'scal
         const indicators = marketData.htf.indicators;
 const systemConfidence = computeConfidence(indicators);
 const allowTrade = systemConfidence >= 65;
+        let optionPick = null;
+
+if (allowTrade && direction) {
+    try {
+        const expiration = await getNearestExpiration(
+            symbol,
+            tradingStyle === 'scalping' ? 3 : 7
+        );
+
+        if (expiration) {
+            const chain = await getOptionsChain(symbol, expiration);
+            optionPick = pickBestOption(chain, direction, marketData.price);
+        }
+    } catch (e) {
+        console.warn('Options fetch failed:', e.message);
+    }
+}
 const badLiquidity = isBadLiquidityTime();
 const conflictScore = htfLtfScore(
     marketData.htf.indicators,
@@ -1064,6 +1146,14 @@ ${styleEmoji} *TRADING STYLE: ${tradingStyle.toUpperCase()}*
 🧠 SYSTEM CONFIDENCE (RULE-BASED):
 • Score: ${systemConfidence}%
 • Trade Permission: ${allowTrade ? '✅ ALLOWED' : '❌ AVOID TRADE'}
+🎯 OPTIONS AUTO-SELECTION:
+${optionPick ? 
+`• Type: ${optionPick.option_type.toUpperCase()}
+• Strike: $${optionPick.strike}
+• Expiration: ${optionPick.expiration_date}
+• Delta: ${optionPick.greeks.delta.toFixed(2)}
+• Bid/Ask: ${optionPick.bid} / ${optionPick.ask}` 
+: '❌ No suitable contract (delta / liquidity mismatch)'}
 
 SYSTEM RULES:
 - <65% → AVOID TRADE (NO ENTRY, NO STRIKE, NO TP/SL)
