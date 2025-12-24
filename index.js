@@ -940,26 +940,36 @@ function getTodayDate() {
 
 // Helper: Get current market session
 function getMarketSession() {
-    const now = new Date();
-    const hours = now.getUTCHours();
-    const minutes = now.getUTCMinutes();
-    const currentTime = hours + minutes / 60;
+    // Always calculate in New York time (DST-safe)
+    const nyString = new Date().toLocaleString("en-US", {
+        timeZone: "America/New_York"
+    });
+    const nyDate = new Date(nyString);
 
-    // US Market hours (EST = UTC-5, EDT = UTC-4)
-    // Pre-market: 4:00-9:30 EST (9:00-14:30 UTC)
-    // Regular: 9:30-16:00 EST (14:30-21:00 UTC)
-    // After-hours: 16:00-20:00 EST (21:00-01:00 UTC)
+    const hour = nyDate.getHours();
+    const minute = nyDate.getMinutes();
+    const time = hour + minute / 60;
 
-    if (currentTime >= 9 && currentTime < 14.5) {
-        return 'pre-market';
-    } else if (currentTime >= 14.5 && currentTime < 21) {
-        return 'regular';
-    } else if (currentTime >= 21 || currentTime < 1) {
-        return 'after-hours';
-    } else {
-        return 'closed';
+    // US Market Hours (NYSE / NASDAQ)
+    // Pre-market: 4:00 – 9:30
+    // Regular: 9:30 – 16:00
+    // After-hours: 16:00 – 20:00
+
+    if (time >= 4 && time < 9.5) {
+        return "pre-market";
     }
+
+    if (time >= 9.5 && time < 16) {
+        return "regular";
+    }
+
+    if (time >= 16 && time < 20) {
+        return "after-hours";
+    }
+
+    return "closed";
 }
+
 
 // Helper: Analyze with OpenAI Vision
 async function analyzeWithVision(imageUrls, marketData, analysisType = 'signal') {
