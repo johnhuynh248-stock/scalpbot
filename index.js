@@ -1987,6 +1987,28 @@ ${marketWarning}
 ${result.analysis}
 
 ━━━━━━━━━━━━━━━━━━━
+📍 *KEY LEVELS*
+• VWAP: $${result.marketData.htf.indicators.vwap?.toFixed(2)}
+
+🛡️ *SUPPORT LEVELS*
+${result.marketData.htf.indicators.supportLevels?.length
+    ? result.marketData.htf.indicators.supportLevels.map(
+        s => `• $${s.price} (${s.strength}, ${s.type})`
+      ).join('\n')
+    : '• No clear support'}
+
+🚧 *RESISTANCE LEVELS*
+${result.marketData.htf.indicators.resistanceLevels?.length
+    ? result.marketData.htf.indicators.resistanceLevels.map(
+        r => `• $${r.price} (${r.strength}, ${r.type})`
+      ).join('\n')
+    : '• No clear resistance'}
+
+📊 *VOLUME ANALYSIS*
+• Profile: ${result.marketData.htf.indicators.volumeAnalysis.profile}
+• Trend: ${result.marketData.htf.indicators.volumeAnalysis.trend}
+
+━━━━━━━━━━━━━━━━━━━
 💰 *QUICK STATS:*
 ${changeEmoji} Price: $${result.marketData.price} (${result.marketData.dataAge === 'last-close' ? '⏸️ Last Close' : '⚡ Live'})
 ${trendEmoji} HTF Trend: ${result.marketData.htf?.indicators?.trend?.direction || 'unknown'}
