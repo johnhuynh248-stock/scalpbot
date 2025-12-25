@@ -592,13 +592,7 @@ for (let i = 0; i < recentCloses.length; i++) {
 
 const vwapLevel = volSum > 0 ? vwapSum / volSum : 0;
 
-    // Sort by strength and proximity, return top 3
-    return levels
-        .sort((a, b) => {
-            const distanceA = currentPrice - a.price;
-            const distanceB = currentPrice - b.price;
-            return (b.strength - a.strength) || (distanceA - distanceB);
-        })
+
    // Deduplicate nearby levels (cluster within 0.15% of price)
 const uniqueLevels = [];
 const tolerance = currentPrice * 0.0015;
@@ -621,19 +615,21 @@ return uniqueLevels.map(l => ({
 function findResistanceLevelsAdvanced(highs, closes, currentPrice) {
     const levels = [];
     const recentHighs = highs.slice(-100);
-    const recentCloses = closes.slice(-100);
-    
+
     // Find swing highs
     for (let i = 2; i < recentHighs.length - 2; i++) {
-        if (recentHighs[i] > recentHighs[i - 1] && 
+        if (
+            recentHighs[i] > recentHighs[i - 1] &&
             recentHighs[i] > recentHighs[i - 2] &&
-            recentHighs[i] > recentHighs[i + 1] && 
+            recentHighs[i] > recentHighs[i + 1] &&
             recentHighs[i] > recentHighs[i + 2] &&
-            recentHighs[i] > currentPrice) {
-            
+            recentHighs[i] > currentPrice
+        ) {
             const levelPrice = recentHighs[i];
-            const touches = recentHighs.filter(high => Math.abs(high - levelPrice) < levelPrice * 0.002).length;
-            
+            const touches = recentHighs.filter(
+                h => Math.abs(h - levelPrice) < levelPrice * 0.002
+            ).length;
+
             levels.push({
                 price: levelPrice,
                 strength: touches,
@@ -642,19 +638,25 @@ function findResistanceLevelsAdvanced(highs, closes, currentPrice) {
         }
     }
 
-    // Sort and return top 3
-    return levels
-        .sort((a, b) => {
-            const distanceA = a.price - currentPrice;
-            const distanceB = b.price - currentPrice;
-            return (b.strength - a.strength) || (distanceA - distanceB);
-        })
-        .slice(0, 3)
-        .map(l => ({
-            price: parseFloat(l.price.toFixed(2)),
-            strength: l.strength >= 3 ? 'strong' : l.strength >= 2 ? 'moderate' : 'weak',
-            type: l.type
-        }));
+    // Deduplicate & select top 3 resistance levels
+    const uniqueLevels = [];
+    const tolerance = currentPrice * 0.0015;
+
+    for (const lvl of levels.sort((a, b) => b.strength - a.strength)) {
+        if (!uniqueLevels.some(u => Math.abs(u.price - lvl.price) < tolerance)) {
+            uniqueLevels.push(lvl);
+        }
+        if (uniqueLevels.length >= 3) break;
+    }
+
+    return uniqueLevels.map(l => ({
+        price: parseFloat(l.price.toFixed(2)),
+        strength:
+            l.strength >= 3 ? 'strong' :
+            l.strength >= 2 ? 'moderate' :
+            'weak',
+        type: l.type
+    }));
 }
 
 // Helper: Analyze Trend
