@@ -599,12 +599,22 @@ const vwapLevel = volSum > 0 ? vwapSum / volSum : 0;
             const distanceB = currentPrice - b.price;
             return (b.strength - a.strength) || (distanceA - distanceB);
         })
-        .slice(0, 3)
-        .map(l => ({
-            price: parseFloat(l.price.toFixed(2)),
-            strength: l.strength >= 3 ? 'strong' : l.strength >= 2 ? 'moderate' : 'weak',
-            type: l.type
-        }));
+   // Deduplicate nearby levels (cluster within 0.15% of price)
+const uniqueLevels = [];
+const tolerance = currentPrice * 0.0015;
+
+for (const lvl of levels.sort((a, b) => b.strength - a.strength)) {
+    if (!uniqueLevels.some(u => Math.abs(u.price - lvl.price) < tolerance)) {
+        uniqueLevels.push(lvl);
+    }
+    if (uniqueLevels.length >= 3) break;
+}
+
+return uniqueLevels.map(l => ({
+    price: parseFloat(l.price.toFixed(2)),
+    strength: l.strength >= 3 ? 'strong' : l.strength >= 2 ? 'moderate' : 'weak',
+    type: l.type
+}));
 }
 
 // Helper: Find advanced resistance levels
