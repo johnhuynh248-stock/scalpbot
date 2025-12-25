@@ -1205,7 +1205,7 @@ ${styleEmoji} *TRADING STYLE: ${tradingStyle.toUpperCase()}*
 • Session: ${marketData.marketSession}
 🧠 SYSTEM CONFIDENCE (RULE-BASED):
 • Score: ${systemConfidence}%
-• Trade Permission: ${allowTrade ? '✅ ALLOWED' : '❌ AVOID TRADE'}
+• Trade Status: ${allowTrade ? '✅ TRADEABLE' : '🚫 NOT TRADEABLE (bias only)'}
 🎯 OPTIONS AUTO-SELECTION:
 ${optionPick ? 
 `• Type: ${optionPick.option_type.toUpperCase()}
@@ -1261,7 +1261,8 @@ ${resistanceText}
 📋 YÊU CẦU PHÂN TÍCH:
 Dựa trên ${tradingStyle} setup (hold ${marketData.targets.hold_time}), đưa ra:
 
-1. 🎯 Direction: CALL hay PUT
+1. 🧭 Directional Bias: CALL / PUT (market bias only, NOT an entry)
+   ⚠️ Bias chỉ cho hướng thị trường — KHÔNG phải lệnh vào
 2. 💭 Lý do chính dựa trên HTF trend + LTF entry timing
 3. ✅ Entry confirmation: HTF aligned? LTF signal clear?
 4. 📊 Verify TP/SL levels (có hợp lý với R:R >=${marketData.targets.min_rr}:1?)
